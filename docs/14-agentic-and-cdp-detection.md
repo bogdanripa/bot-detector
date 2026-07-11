@@ -127,16 +127,45 @@ This is the class that catches **computer-use / Operator** agents that CDP
 detection and `isTrusted` both miss. It asks: *did this click/keystroke come from
 a human hand on real hardware, or was it injected?*
 
-| Signal | Human | Agent (OS-injected or CDP `Input.dispatch*`) |
+| Signal | Human | Agent (OS-injected or CDP `Input.dispatch*` or JS-dispatched) |
 |--------|-------|----------------------------------------------|
-| **`event.isTrusted`** | `true` | `true` for OS-level and CDP input (**not** a discriminator for real agents); `false` only for naïve JS-dispatched events. Keep it as a cheap filter, don't rely on it. |
-| **Pointer trail before a click** ⭐ | Dense stream of `pointermove`/`mousemove` events approaching the target | A click with **no or negligible preceding movement** — OS coordinate-clicks and `page.click()` **teleport** the cursor to the target. |
+| **`event.isTrusted`** | `true` | `true` for OS-level and CDP input (**not** a discriminator for those); `false` only for naïve JS-dispatched events. Cheap filter, don't rely on it. |
+| **`UIEvent.sourceCapabilities`** ⭐ | Non-null `InputDeviceCapabilities`, and **the same instance across the whole cascade** (`pointerdown`→`mousedown`→`focus`→`click`) | `null` for JS-dispatched events; may be null or inconsistent across the cascade for injected input. A cheap, standards-backed synthetic-event tell. |
+| **Full event cascade** ⭐ | A real click emits the whole sequence: `pointerover`→`pointerenter`→`pointermove`(s)→`pointerdown`→`mousedown`→`focus`→`pointerup`→`mouseup`→`click` | Programmatic/CDP clicks frequently **skip the hover/move prefix** (no `pointerover`/`mousemove` before `pointerdown`) — the element is clicked without ever being approached or hovered. |
+| **`mousedown`→`mouseup` dwell** | Natural ~40–150 ms, variable | ~0 ms or a fixed constant. |
+| **Pointer trail before a click** ⭐ | Dense stream of `pointermove` approaching the target | A click with **no or negligible preceding movement** — OS coordinate-clicks and `page.click()` **teleport** the cursor to the target. |
 | **`mousemove` event count** | Hundreds over a short session | Impossibly low (often ~0 between actions). |
 | **`getCoalescedEvents()`** on `pointermove` | Multiple coalesced hardware samples per frame (125–1000 Hz mouse) | Empty / single — injected input has no hardware coalescing. |
-| **Click landing position** | Sub-pixel, **off-center**, scattered within the element | Exact **integer** pixel, frequently the **geometric center** of the target's bounding box (the agent computed it from a screenshot). |
+| **Click landing distribution** ⭐ (your idea, generalized) | Sub-pixel, **off-center**, scattered as a 2-D Gaussian slightly above true center, with **variance across clicks** | Zero-variance: the **same offset every time** — usually exact-integer **geometric center** (bbox center computed from a screenshot). Even ghost-cursor's *uniform*-in-bbox differs from a human Gaussian. |
+| **`screenX/Y` vs `clientX/Y`** | Differ by the window's screen offset (chrome, position) | Often **equal** (`screenX==clientX`) for JS/CDP-dispatched events — no real window offset. |
 | **`movementX/Y` vs `clientX/Y` deltas** | Consistent, hardware-derived | Often `0` or inconsistent for injected events. |
-| **Pointer pressure / tilt / `pointerType`** | Present on touch/pen; plausible on mouse | Frequently absent/default. |
-| **Cursor path acceleration** | Ballistic: accelerate → peak → decelerate (Fitts's law), with micro-tremor | Near-zero acceleration, constant velocity, or a too-smooth Bézier (ghost-cursor style). |
+| **Pointer pressure / width / height / `pointerType`** | Plausible, device-dependent (mouse pressure 0.5 on down; touch has real radii) | Defaults: `pressure` 0, `width/height` 1, `pointerType` "mouse" with no variance. |
+| **`UIEvent.detail`, `which`, `buttons`** | Consistent with the gesture (e.g. `detail` increments on multi-click) | Often 0/1 defaults, inconsistent. |
+| **Cursor path shape & speed** (your ideas) | Ballistic: accelerate→peak→decelerate (Fitts's law), overshoot-and-correct, micro-tremor, **variable speed** | **Constant speed**, near-zero acceleration, or a **too-smooth single Bézier** (ghost-cursor style) with no tremor. |
+
+### 4.1 Hardware vs programmatic events (your point, made precise)
+
+The cleanest framing of several of your ideas: **did the event come from a real
+input device, or was it manufactured?** Three provenance tiers, in increasing
+difficulty to detect:
+
+1. **JS-dispatched** (`el.dispatchEvent(new MouseEvent(...))`, `el.click()`,
+   `el.value = ...`) — the easiest: `isTrusted === false`, `sourceCapabilities ===
+   null`, `screenX === clientX`, no cascade, no coalesced events. A naïve bot.
+2. **CDP-injected** (`Input.dispatchMouseEvent`, Playwright/Puppeteer) —
+   `isTrusted === true` (that's why automation prefers it), but still teleports (no
+   move trail), lands at computed coordinates, no hardware coalescing, and pairs
+   with the CDP leaks in §3.
+3. **OS-injected** (xdotool / Accessibility — computer-use, Operator) — the
+   hardest: genuine OS events, `isTrusted === true`, real `sourceCapabilities`, but
+   still **teleports** (the cursor jumps to an absolute coordinate with no
+   intermediate `mousemove` stream), lands at exact bbox centers, and carries no
+   idle/tremor motion. Caught by the *trail/coalescing/distribution/cadence*
+   signals, not by provenance flags.
+
+So `isTrusted`/`sourceCapabilities` catch tier 1; input-trail + coalescing +
+click-distribution + cadence catch tiers 2 and 3. We record the **inferred
+provenance tier** per action and feed it to `automationType`.
 
 ### The strongest single tell: **a click with no approach trail**
 
@@ -208,18 +237,42 @@ into a richer biometric set.
   paths lack it.
 - **Path entropy:** low entropy / high regularity ⇒ synthetic.
 
-**Typing dynamics** (FP-Agent: *the most informative behavioral features*)
-- **Inter-key latency distribution** (human ≈ log-normal, digraph-dependent; agent
-  ≈ uniform, too regular, or zero when values are set programmatically).
-- **Hold latency** (key down→up dwell) — present and variable for humans.
-- **Backspace/delete usage & corrections** — humans make and fix mistakes; agents
-  rarely do.
+**Typing dynamics** (FP-Agent: *the most informative behavioral features* — and
+where several of your ideas land)
+- **"Typing is perfect" (no mistakes):** humans make and fix typos; a long form
+  filled with **zero backspaces/deletes and zero corrections** is a strong tell.
+- **"Typing timing is perfect" (same delay):** human inter-key latency is ≈
+  log-normal and **digraph-dependent** (some letter pairs are faster); a **near-
+  constant delay** (low variance / metronomic) between keys is synthetic. Also
+  check **hold latency** (key-down→up dwell) — present and variable for humans,
+  absent/constant for agents.
+- **"Always pasting values":** distinguish three fill modes and weight them
+  differently —
+  - *typed* (a stream of `keydown`/`beforeinput`/`input` with human timing) → human;
+  - *pasted* (a `paste` event, or `insertFromPaste` `inputType`) → **neutral for one
+    field** (password managers, humans paste too), **suspicious when every field is
+    pasted** with no typing anywhere;
+  - *set programmatically* (`.value = …` or `Input.insertText`) → **the value
+    appears with no `keydown`, no `paste`, no `beforeinput`** → strong agent tell.
+    Detect via `input` firing with `event.inputType == null`/`insertReplacementText`
+    and zero preceding keystrokes.
+- **Autofill vs. agent:** browser/password-manager autofill sets the
+  `:autofill` / `:-webkit-autofill` CSS pseudo-class on the field; a programmatic
+  agent set-value does **not**. So a filled field with no keystrokes **and** no
+  `:autofill` pseudo-class is an agent, whereas one *with* the pseudo-class is a
+  password manager (not penalized).
+- **Keystroke integrity:** genuine `KeyboardEvent`s have consistent
+  `key`/`code`/`keyCode`, fire `beforeinput`, and set `isComposing` for IME; CDP/JS
+  key injection often has an empty `code`, missing `beforeinput`, or inconsistent
+  `keyCode`.
 - **DOM `input`/`change` event counts vs. keystrokes** — a value that appears with
-  few/no `keydown`s (set via `.value` or `insertText`) is a strong tell.
+  far fewer `keydown`s than characters is set, not typed.
 
 **Scroll dynamics**
-- Continuous wheel/trackpad deltas with overshoot (human) vs. discrete jumps or
-  programmatic `scrollTo` (agent).
+- Continuous wheel/trackpad deltas with **fractional** `deltaY` and momentum/
+  overshoot (human) vs. **integer, uniform** deltas, discrete jumps, or programmatic
+  `scrollTo`/`scrollIntoView` that lands the element **exactly** at top/center
+  (agent).
 
 All of these live in the client behavior collector and feed the engine's bounded
 behavior group — but with an **agent-aware sub-weighting** (§9): for a client with
@@ -278,6 +331,110 @@ choose to declare themselves.
 
 ---
 
+## 8B. Active honeypot probes — DOM-agent vs vision-agent traps
+
+Everything above is **passive** (observe what the client does). Because the
+deployable app *is* a honeypot, it can also **actively bait** — plant elements that
+a human never perceives but a particular *kind* of agent will act on. The pattern
+of which traps trip is not just a bot signal; it **attributes the agent's
+architecture**, which is otherwise very hard.
+
+The key asymmetry:
+
+| Agent type | Sees / acts on | Blind to |
+|------------|----------------|----------|
+| **DOM / CDP / extension agents** (Playwright, `browser-use`, Comet) | the **DOM / accessibility tree** — can read and fill hidden inputs, click without scrolling, query selectors | nothing structural; but they don't "see" pixels |
+| **Vision / screenshot agents** (computer-use, Operator, Atlas-OWL) | the **rendered pixels** — only what's visually on screen | `display:none`, off-screen, `visibility:hidden`, DOM structure, hidden inputs |
+| **Humans** | the **rendered pixels**, like vision agents, but with human input dynamics | same as vision agents |
+
+So two complementary traps triangulate the client:
+
+### The DOM trap (catches DOM/CDP agents)
+
+A **honeypot form field** present in the DOM but imperceptible to a human. A human
+never fills it; a DOM-parsing agent fills every field it finds.
+
+- **Do not** use `display:none`/`hidden` (mature bots skip those). Hide by
+  **off-screen position + tiny size + `overflow:hidden`**, or a zero-opacity layer,
+  with an `aria-hidden`/`tabindex="-1"` and a label like "leave this empty."
+- Any value submitted in it ⇒ **DOM-based agent** (`agentic-cdp`/`agentic-ext`),
+  because a vision agent and a human both *can't see it*.
+- Rotate the field name per session so a bot can't hardcode a skip-list.
+
+### The vision trap (catches vision/screenshot agents)
+
+The inverse: an affordance that is **visually present but has no clean DOM
+handle**, or where the **visual click-target differs from the DOM element**.
+
+- A button whose visible label is painted on a `<canvas>`/background image with the
+  real clickable element offset from it: a vision agent clicks the **visual
+  center** (wrong DOM coords); a DOM agent clicks the **element**. Divergent
+  behavior separates them.
+- An instruction rendered **only as an image** ("type BLUE in the box"): a vision
+  agent follows it; a pure-DOM scraper (which reads text, not pixels) misses it.
+- A **smooth-pursuit target**: a control that only becomes actionable while a dot is
+  continuously tracked/hovered along a path. A human tracks smoothly; a
+  screenshot-sampling agent (discrete frames) can't follow continuous motion, and a
+  DOM agent doesn't perceive the visual state at all.
+
+### The time trap & the gesture-gated token
+
+- **Minimum-plausible-fill-time:** a form submitted faster than a human could read
+  it (sub-second for a multi-field form) ⇒ automated, regardless of input polish.
+- **Gesture-gated token:** a hidden token that only populates on a **trusted**
+  user gesture (`isTrusted` pointerdown with a real approach trail). Submitting
+  without it means no genuine human gesture occurred.
+
+### Why this is powerful
+
+The trap results feed `automationType` **attribution**: DOM-trap tripped ⇒
+DOM/CDP/extension agent; vision-trap tripped (or DOM-trap *not* tripped while other
+agent signals fire) ⇒ vision/screenshot agent. This is often the only way to tell a
+computer-use/Operator agent (vision) from a `browser-use`/Comet agent (DOM) when
+both present a clean environment.
+
+> **Honesty & accessibility.** Honeypot fields must never trap assistive
+> technology — screen-reader users can encounter off-screen fields. Use
+> `aria-hidden="true"`, `tabindex="-1"`, explicit "leave empty" labeling, and treat
+> a filled honeypot as *one* weighted signal, never an instant hard block. These
+> are diagnostic inputs to the probability, consistent with the tool's
+> report-don't-enforce stance.
+
+---
+
+## 8C. "What else?" — additional tells catalog
+
+A grab-bag of further signals, beyond the ones already specified above, grouped so
+they can be triaged into the collectors. Most are cheap; each is a weak-to-moderate
+contributor that matters in combination.
+
+| Category | Signal | Why it discriminates |
+|----------|--------|----------------------|
+| **Reaction timing** | Reaction latency to a **newly-appeared** element (button that fades in after N ms) | Humans need ~150–500 ms to perceive+react; a DOM agent reacts at **MutationObserver speed** (acts the instant it enters the DOM, faster than human perception); a screenshot agent reacts with a multi-second lag. Both are non-human. |
+| | Reading dwell vs. content length | Acting/submitting faster than the text could be read ⇒ not reading. |
+| | No **fatigue drift** over a long session | Humans speed up/slow down and vary; a bot's timing distribution is stationary. |
+| | **Metronomic** inter-action intervals | Constant gaps between actions ⇒ scripted pacing. |
+| **Idle behavior** | No idle mouse drift / micro-movements while "reading" | Humans constantly jitter the pointer; agents are perfectly still between actions. |
+| | Cursor never leaves and re-enters the window; no accidental movements | Humans wander; agents move only with purpose. |
+| **Focus/nav semantics** | Field `focus` with **no preceding click or Tab** (programmatic `.focus()`) | Human focus always follows a pointer/keyboard gesture. |
+| | Form submitted via `requestSubmit()` / Enter with the submit button never focused or hovered | Programmatic submission. |
+| | Fields filled in **perfect DOM/tab order** with no clicking around | Humans jump, revisit, correct. |
+| | Navigates hover-reveal UI (dropdowns) **without generating hover events** | Knows DOM structure without perceiving the visual state ⇒ DOM agent. |
+| **Rendering/visibility** | `document.visibilityState`/`hasFocus()` say hidden/blurred while actions occur; throttled `requestAnimationFrame` | Agent operating a backgrounded/offscreen tab. |
+| | **Fixed viewport** identical across sessions | Automation default, not a resized human window. |
+| | Interacts with **below-the-fold** elements **without scrolling** | DOM agent (reaches elements by handle); a human/vision agent must scroll first. |
+| **Clipboard** | `paste` with clipboard populated **externally** (no prior in-page `copy`/selection) | Value injected via the clipboard channel. |
+| **Device consistency** | **Mobile UA but no touch events** (only mouse), `maxTouchPoints:0`, no `deviceorientation` | Spoofed mobile / desktop automation wearing a mobile UA. |
+| **Determinism** | **Cross-session behavioral determinism** — the same trajectory/timing replayed run to run | Humans never reproduce their motion exactly; a bot's behavior is a stable fingerprint. |
+| **Timing precision** | `performance.now()` resolution / event `timeStamp` quantized to exact ms or rAF boundaries | Injected events land on artificial time grids. |
+| **Error-freeness** | Zero mis-clicks, zero backtracks, zero re-focus across a multi-step flow | Human interaction is noisy; flawless execution is a distribution tell. |
+
+None of these is decisive alone; the engine sums them (bounded) and lets them
+**reinforce** the hard input-provenance/CDP tells — never convict on soft timing
+alone (a fast, careful human exists). See §9.3 on confidence.
+
+---
+
 ## 9. Scoring: the agentic case
 
 The scoring engine ([docs/07](07-coherence-engine.md)) extends with new groups and
@@ -290,11 +447,23 @@ one pivotal new idea.
 | CDP leaks (§3) | `runtimeEnableLeak` | +4.5 (decisive when present) |
 | | `sourceUrlLeak`, `mainWorldExecution`, `__pwInitScripts`, `exposeFunctionLeak` | +2.5–3.5 |
 | Input provenance (§4) | click with no approach trail + no coalesced events + exact-integer center | +3.5 (combined) |
+| | `sourceCapabilities==null` / inconsistent across the event cascade; missing hover/move prefix | +2.5 |
+| | zero-variance click-offset (same %/center every time) across many clicks | +2.0 |
+| | value set programmatically (no keydown, no paste, no `:autofill` pseudo-class) | +2.5 |
+| | `screenX==clientX` / `movementX/Y==0` on click | +1.5 |
 | | impossibly low `mousemove` count in an interactive session | +2.0 |
 | Screenshot cadence (§5) | multi-second bursty action gaps + zero idle motion + non-continuous scroll | +2.5 (combined, phase 2) |
-| Behavioral biometrics (§6) | near-zero mouse acceleration; uniform inter-key latency; value set with no keystrokes | promoted for clean-fingerprint clients (§9.2) |
+| Behavioral biometrics (§6) | constant mouse speed / near-zero acceleration / single smooth Bézier; uniform (metronomic) inter-key latency; zero typos across a long form | promoted for clean-fingerprint clients (§9.2) |
+| Honeypot traps (§8B) | DOM honeypot field filled | +3.0, ⇒ `agentic-cdp`/`agentic-ext` |
+| | vision-trap tripped / smooth-pursuit failed / sub-human fill time / gesture-token missing | +2.0–3.0, informs vision-vs-DOM attribution |
 | Agent artifacts (§7) | Comet DOM extension trace; `Atlas`/`CFNetwork` UA | +3.0, plus sets `automationType` |
 | Declared agent (§8) | valid Web Bot Auth signature | sets `agentic-declared`; routes to allow/verify, not penalty |
+
+**Attribution from traps (§8B).** DOM-trap filled ⇒ `agentic-cdp`/`agentic-ext`
+(the agent reads the DOM). Strong agent behavior but DOM-trap *not* filled +
+vision-trap tripped ⇒ `agentic-os` (a vision/screenshot agent that only sees
+pixels). This is often the only clean way to separate a computer-use/Operator
+agent from a `browser-use`/Comet agent.
 
 ### 9.2 The pivotal contradiction: **clean fingerprint + agent behavior**
 
@@ -341,8 +510,13 @@ timing noise alone).
 Per the two-part split ([docs/13](13-libraries-and-packaging.md)):
 
 - **`@botdetect/client`** gains: a `cdpLeaks` collector (§3), an `inputProvenance`
-  collector (§4), a `cadence` collector (§5), and an expanded `biometrics`
-  collector (§6). All are passive/behavioral, browser-side, zero-dependency.
+  collector (§4, incl. `sourceCapabilities`/cascade/click-distribution/provenance-
+  tier), a `cadence` collector (§5), an expanded `biometrics` collector (§6, incl.
+  typing/paste/autofill modes), and the **active honeypot probes** (§8B) the
+  honeypot page renders. All are passive/behavioral, browser-side, zero-dependency.
+- **The honeypot web app** (`honeypot/web`) renders the §8B trap markup (DOM
+  honeypot field, vision trap, smooth-pursuit target, gesture-gated token); the
+  client collector reports which tripped.
 - **`go/httpcapture`** gains: Web Bot Auth signature parsing/verification (§8) and
   the server-side UA/`CFNetwork` product tells (§7).
 - **`go/engine` / `@botdetect/engine`** gain: the new groups, the
@@ -415,3 +589,7 @@ in Comet is a human.
 - Anthropic — Computer use tool (screenshot + xdotool/Accessibility loop) — https://docs.claude.com/en/docs/agents-and-tools/tool-use/computer-use-tool
 - browser-use issue #3829 — synthetic events / isTrusted leak — https://github.com/browser-use/browser-use/issues/3829
 - Bot detection in 2026: JA4 & HTTP/2 fingerprinting — https://krowdev.com/article/bot-detection-2026/
+- MDN — `UIEvent.sourceCapabilities` (null for synthetic; consistent across the cascade) — https://developer.mozilla.org/en-US/docs/Web/API/UIEvent/sourceCapabilities
+- OpenReplay — Honeypot fields to stop bots without CAPTCHAs — https://blog.openreplay.com/honeypot-fields-stop-bots/
+- Recognising/Mitigating LLM Pollution of Online Behavioural Research (honeypot questions; vision vs DOM agents) — arXiv 2508.01390 — https://arxiv.org/pdf/2508.01390
+- LLM Agent Honeypot: monitoring AI hacking agents in the wild — arXiv 2410.13919 — https://arxiv.org/pdf/2410.13919

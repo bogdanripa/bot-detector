@@ -136,6 +136,14 @@ from the JSON contract ([docs/03](03-api-contract.md)).
   password manager, phase 2 simply reports lower behavioral confidence rather than
   penalizing them (autofill ≠ automation — see the gating in
   [docs/07 §2.6](07-coherence-engine.md#26-form-behavior-layer-1-phase-2-bounded)).
+- **Embeds the active honeypot traps** ([docs/14 §8B](14-agentic-and-cdp-detection.md#8b-active-honeypot-probes--dom-agent-vs-vision-agent-traps)):
+  a DOM honeypot field (off-screen, `aria-hidden`, "leave empty"), a vision trap,
+  a smooth-pursuit target, and a gesture-gated token. These bait real-browser AI
+  agents and, by *which* trap trips, attribute the agent as DOM-based vs.
+  vision-based. They must never trap assistive tech (accessibility caveat in §8B).
+- **The banner shows `automationType`** when it's not `none` — e.g. a red banner
+  reading "Likely automated — agent-driven browser (`agentic-os`)" so the report
+  says *what kind* of automation it found, not just the probability.
 
 ---
 
