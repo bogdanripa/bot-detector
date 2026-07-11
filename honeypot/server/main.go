@@ -550,8 +550,8 @@ func renderChecksHTML(report schema.Report) string {
 			Pending:        pending,
 		},
 	}
-	badge := map[string]string{"pass": "PASS", "warn": "WARN", "fail": "FAIL", "unavailable": "N/A"}
-	col := map[string]string{"pass": "#1a7f37", "warn": "#bf8700", "fail": "#cf222e", "unavailable": "#888"}
+	badge := map[string]string{"pass": "PASS", "warn": "WARN", "fail": "FAIL", "unavailable": "N/A", "pending": "PENDING"}
+	col := map[string]string{"pass": "#1a7f37", "warn": "#bf8700", "fail": "#cf222e", "unavailable": "#888", "pending": "#57606a"}
 	for _, c := range report.Checks {
 		b, cl := badge[c.Status], col[c.Status]
 		if b == "" {

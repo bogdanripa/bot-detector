@@ -93,7 +93,9 @@
       seleniumAttributes: seleniumAttrs(),
       playwrightBindings: playwrightBindings(),
       nodeGlobals: scanGlobals(["Buffer", "process", "require", "global", "emit", "spawn"]),
-      chromeRuntimePresent: !!(window.chrome && window.chrome.runtime),
+      // Real Chrome only exposes chrome.runtime to extension-connectable pages;
+      // normal pages get window.chrome with loadTimes/csi/app. Test the object.
+      chromeRuntimePresent: !!(window.chrome && (window.chrome.loadTimes || window.chrome.csi || window.chrome.app || window.chrome.runtime)),
       webdriverDescriptor: webdriverDescriptor(),
       cdpRuntimeEnableLeak: cdpRuntimeEnableLeak(),
       antiTamperPatched: webdriverDescriptor() !== "native"
@@ -174,7 +176,7 @@
       };
     }
     function clickProvenance(e) {
-      var near = trail.filter(function (p) { return Math.hypot(p.x - e.clientX, p.y - e.clientY) < 80 && e.timeStamp - p.t < 600; });
+      var near = trail.filter(function (p) { return Math.hypot(p.x - e.clientX, p.y - e.clientY) < 120 && e.timeStamp - p.t < 1500; });
       var coalesced = near.reduce(function (s, p) { return s + p.c; }, 0);
       var rr = e.target.getBoundingClientRect();
       var center = Number.isInteger(e.clientX) && Number.isInteger(e.clientY) &&
@@ -266,8 +268,8 @@
     }
     h += '<h3>Checks</h3><table class="bd-checks">';
     (report.checks || []).forEach(function (c) {
-      var badge = { pass: "PASS", warn: "WARN", fail: "FAIL", unavailable: "N/A" }[c.status] || c.status;
-      var col = { pass: "#1a7f37", warn: "#bf8700", fail: "#cf222e", unavailable: "#888" }[c.status] || "#555";
+      var badge = { pass: "PASS", warn: "WARN", fail: "FAIL", unavailable: "N/A", pending: "PENDING" }[c.status] || c.status;
+      var col = { pass: "#1a7f37", warn: "#bf8700", fail: "#cf222e", unavailable: "#888", pending: "#57606a" }[c.status] || "#555";
       h += '<tr><td><span class="bd-badge" style="background:' + col + '">' + badge + "</span></td>";
       h += "<td><b>" + esc(c.title) + "</b><br><span class=bd-exp>" + esc(c.explanation) + "</span></td>";
       h += "<td class=bd-val>" + esc(c.value || "") + "</td></tr>";
@@ -333,8 +335,8 @@
     }
     h += '<table class="bds-checks">';
     (report.checks || []).forEach(function (c) {
-      var badge = { pass: "PASS", warn: "WARN", fail: "FAIL", unavailable: "N/A" }[c.status] || c.status;
-      var col = { pass: "#1a7f37", warn: "#bf8700", fail: "#cf222e", unavailable: "#888" }[c.status] || "#555";
+      var badge = { pass: "PASS", warn: "WARN", fail: "FAIL", unavailable: "N/A", pending: "PENDING" }[c.status] || c.status;
+      var col = { pass: "#1a7f37", warn: "#bf8700", fail: "#cf222e", unavailable: "#888", pending: "#57606a" }[c.status] || "#555";
       h += '<tr><td><span class="bds-badge" style="background:' + col + '">' + esc(badge) + "</span></td>";
       h += "<td><b>" + esc(c.title) + '</b><br><span class="bds-exp">' + esc(c.explanation) + "</span></td>";
       h += '<td class="bds-val">' + esc(c.value || "") + "</td></tr>";

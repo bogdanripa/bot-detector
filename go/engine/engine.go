@@ -206,6 +206,16 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 				pass("chrome_runtime_missing", "present")
 			}
 		}
+	} else {
+		// No client JS yet — surface the full checklist as pending so the
+		// debug panel shows everything that will be evaluated.
+		for _, id := range []string{"cdc_artifacts", "selenium_attributes", "phantom_globals",
+			"playwright_bindings", "navigator_webdriver", "node_globals", "cdp_runtime_enable",
+			"anti_tamper_patched", "headless_ua", "permissions_contradiction", "languages_empty",
+			"no_plugins", "software_webgl", "implausible_hardware", "canvas_blocked",
+			"impossible_geometry", "chrome_runtime_missing"} {
+			record(id, "pending", "awaiting browser JS")
+		}
 	}
 
 	// ---- Layer 2 rules ----
@@ -261,21 +271,34 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 	}
 
 	// ---- Behavior / provenance rules ----
+	humanScroll := ss.ScrollToLink != nil && ss.ScrollToLink.AnyUserGesture
 	if st := ss.ScrollToLink; st != nil && st.ReachedLink {
 		if st.Teleport && !st.AnyUserGesture && st.LandedPixelAligned {
 			fire("scroll_teleport", "no gesture, pixel-aligned")
 		} else if st.AnyUserGesture {
 			pass("scroll_teleport", "human scroll gesture")
+		} else {
+			record("scroll_teleport", "unavailable", "no scroll was needed")
 		}
+	} else {
+		record("scroll_teleport", "pending", "awaiting scroll on the landing page")
 	}
 	if lc := ss.LinkClick; lc != nil && lc.Occurred {
-		if (lc.ApproachPoints == 0 && lc.CoalescedNearby == 0) || lc.AtExactIntegerCenter {
-			fire("click_no_trail", "no approach trail / exact center")
+		// A trackpad/wheel scroll moves the page under a parked pointer, so a
+		// genuine scroll gesture counts as approach provenance too.
+		if lc.AtExactIntegerCenter {
+			fire("click_no_trail", "click at exact element center")
+		} else if lc.ApproachPoints == 0 && lc.CoalescedNearby == 0 && !humanScroll {
+			fire("click_no_trail", "no approach trail or scroll gesture")
 		} else {
-			pass("click_no_trail", "approached, off-center")
+			pass("click_no_trail", "human approach (pointer trail or scroll gesture)")
 		}
+	} else {
+		record("click_no_trail", "pending", "awaiting the landing-page link click")
 	}
-	if b := ss.Behavior; b != nil {
+	if b := ss.Behavior; b == nil {
+		record("behavior_scripted", "pending", "awaiting form typing")
+	} else {
 		scripted := false
 		reasons := []string{}
 		if b.FillToSubmitMs > 0 && b.FillToSubmitMs < 400 {
@@ -317,6 +340,8 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 			} else {
 				passContra("cross_nav_inconsistency", "stable JA4/UA/IP across pages")
 			}
+		} else {
+			recordContra("cross_nav_inconsistency", "pending", "awaiting the next page")
 		}
 	}
 
@@ -493,7 +518,7 @@ func round(f float64, places int) float64 {
 	return math.Round(f*p) / p
 }
 func sortChecks(c []schema.Finding) []schema.Finding {
-	order := map[string]int{"fail": 0, "warn": 1, "unavailable": 2, "pass": 3}
+	order := map[string]int{"fail": 0, "warn": 1, "pending": 2, "unavailable": 3, "pass": 4}
 	sort.SliceStable(c, func(i, j int) bool {
 		return order[c[i].Status] < order[c[j].Status]
 	})
