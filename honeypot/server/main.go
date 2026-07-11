@@ -458,29 +458,54 @@ type checksView struct {
 	Captured, Pending      []string
 }
 
+// The panel is a fixed right sidebar on wide screens (it stays put while you
+// scroll — the scroll IS part of the check) and degrades to an inline card
+// when there is no room. Class names are bds-* to avoid colliding with the
+// result page's own bd-* report styles.
 var checksTmpl = template.Must(template.New("checks").Parse(`
-<section style="margin:2rem 0;border:2px solid #8884;border-radius:12px;padding:1rem 1.2rem">
-  <h2 style="font-size:1.1rem;margin:.2rem 0 .8rem">Live report — checks so far</h2>
-  <div style="display:flex;align-items:center;gap:1rem;border:3px solid {{.BandColor}};border-radius:10px;padding:.6rem 1rem;margin-bottom:.8rem">
-    <div style="font-size:2.2rem;font-weight:800;color:{{.BandColor}}">{{.Percent}}%</div>
+<style>
+  .bds-side { position: fixed; top: 0; right: 0; bottom: 0; width: 340px; overflow-y: auto;
+              box-sizing: border-box; padding: 1rem 1.1rem 2rem; border-left: 1px solid #8884;
+              background: #fafafa; font-size: .9rem; line-height: 1.45; }
+  @media (prefers-color-scheme: dark) { .bds-side { background: #161616; } }
+  @media (max-width: 1439px) { .bds-side { position: static; width: auto; border: 1px solid #8884;
+              border-radius: 12px; margin: 2rem 0; overflow: visible; } }
+  .bds-side h2 { font-size: 1.02rem; margin: .2rem 0 .8rem; }
+  .bds-banner { display: flex; align-items: center; gap: .8rem; border: 3px solid; border-radius: 10px;
+              padding: .45rem .8rem; margin-bottom: .8rem; }
+  .bds-pct { font-size: 1.9rem; font-weight: 800; }
+  .bds-sub { color: #777; font-size: .78rem; }
+  .bds-contra { padding-left: 1.1rem; margin: .4rem 0; }
+  .bds-contra li { margin: .25rem 0; }
+  .bds-checks { border-collapse: collapse; width: 100%; }
+  .bds-checks td { border-top: 1px solid #8883; padding: .35rem .25rem; vertical-align: top; }
+  .bds-badge { color: #fff; font-size: .62rem; font-weight: 700; padding: .1rem .35rem; border-radius: 4px; }
+  .bds-exp { color: #888; font-size: .78rem; }
+  .bds-val { font-family: ui-monospace, monospace; font-size: .7rem; color: #777; word-break: break-all; }
+  .bds-note { color: #888; font-size: .78rem; margin-bottom: 0; }
+</style>
+<aside class="bds-side">
+  <h2>Live report — checks so far</h2>
+  <div class="bds-banner" style="border-color:{{.BandColor}}">
+    <div class="bds-pct" style="color:{{.BandColor}}">{{.Percent}}%</div>
     <div>
-      <div style="font-size:1.1rem;font-weight:700;color:{{.BandColor}}">{{.Icon}} {{.Band}}</div>
-      <div style="color:#777;font-size:.85rem">automation probability {{.Percent}}% &middot; confidence {{.ConfidencePct}}%{{if ne .AutomationType "none"}} &middot; type: <code>{{.AutomationType}}</code>{{end}}</div>
+      <div style="font-weight:700;color:{{.BandColor}}">{{.Icon}} {{.Band}}</div>
+      <div class="bds-sub">automation probability {{.Percent}}% &middot; confidence {{.ConfidencePct}}%{{if ne .AutomationType "none"}} &middot; type: <code>{{.AutomationType}}</code>{{end}}</div>
     </div>
   </div>
-  {{if .Contradictions}}<ul style="padding-left:1.1rem;margin:.4rem 0">
-  {{range .Contradictions}}<li style="margin:.25rem 0"><b style="color:#cf222e">{{.Title}}</b> — {{.Explanation}}{{if .Value}} <code style="font-size:.8rem">{{.Value}}</code>{{end}}</li>{{end}}
+  {{if .Contradictions}}<ul class="bds-contra">
+  {{range .Contradictions}}<li><b style="color:#cf222e">{{.Title}}</b> — {{.Explanation}}{{if .Value}} <code style="font-size:.75rem">{{.Value}}</code>{{end}}</li>{{end}}
   </ul>{{end}}
-  <table style="border-collapse:collapse;width:100%">
+  <table class="bds-checks">
   {{range .Checks}}<tr>
-    <td style="border-top:1px solid #8883;padding:.4rem .3rem;vertical-align:top"><span style="color:#fff;font-size:.7rem;font-weight:700;padding:.12rem .4rem;border-radius:4px;background:{{.Color}}">{{.Badge}}</span></td>
-    <td style="border-top:1px solid #8883;padding:.4rem .3rem;vertical-align:top"><b>{{.Title}}</b><br><span style="color:#888;font-size:.85rem">{{.Explanation}}</span></td>
-    <td style="border-top:1px solid #8883;padding:.4rem .3rem;vertical-align:top;font-family:ui-monospace,monospace;font-size:.78rem;color:#777;word-break:break-all;max-width:14rem">{{.Value}}</td>
+    <td><span class="bds-badge" style="background:{{.Color}}">{{.Badge}}</span></td>
+    <td><b>{{.Title}}</b><br><span class="bds-exp">{{.Explanation}}</span></td>
+    <td class="bds-val">{{.Value}}</td>
   </tr>{{end}}
   </table>
-  <p style="color:#888;font-size:.85rem;margin-bottom:0">Captured so far: {{range $i, $c := .Captured}}{{if $i}}, {{end}}<b>{{$c}}</b>{{end}}.
+  <p class="bds-note">Captured so far: {{range $i, $c := .Captured}}{{if $i}}, {{end}}<b>{{$c}}</b>{{end}}.
   {{if .Pending}}Still to come: {{range $i, $c := .Pending}}{{if $i}}, {{end}}{{$c}}{{end}} — continue through the pages and this list grows.{{end}}</p>
-</section>`))
+</aside>`))
 
 // Badge/Color are derived per finding for the template.
 type findingView struct {
