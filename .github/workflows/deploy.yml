@@ -3,11 +3,10 @@ name: deploy
 # Builds the self-contained linux binary and ships it to the VM over SSH, then
 # restarts the systemd service. One-time VM setup (user, /opt/honeypot, the
 # honeypot.service unit) is manual — see deploy/README.md.
-# Edit `branches` to your production branch. It currently includes both `main`
-# and this repo's working branch so push-to-deploy works today.
+# Deploys on push to main (or manual dispatch).
 on:
   push:
-    branches: [main, claude/app-deployment-planning-1fr7g5]
+    branches: [main]
   workflow_dispatch: {}
 
 concurrency:
