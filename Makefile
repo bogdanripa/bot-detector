@@ -1,7 +1,7 @@
 # Bot-detector — build & run the honeypot (see docs/02, docs/12).
 BD_ADDR ?= :8443
 
-.PHONY: build build-linux deploy test run dev vet clean fmt fetch-ipdata
+.PHONY: build build-linux test run dev vet clean fmt fetch-ipdata
 
 build:            ## compile the honeypot server binary
 	go build -o bin/honeypot ./honeypot/server
@@ -23,9 +23,6 @@ fmt:
 
 build-linux:      ## build the self-contained linux/amd64 binary (assets embedded)
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/honeypot-linux-amd64 ./honeypot/server
-
-deploy:           ## build + copy + restart on the VM (HOST=user@ip)
-	./deploy/deploy.sh
 
 fetch-ipdata:    ## download the free (public-domain) iptoasn IP→ASN table
 	mkdir -p data

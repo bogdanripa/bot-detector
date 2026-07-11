@@ -104,17 +104,12 @@ proof.
   **Let's Encrypt** cert in-process (needs :80 for the ACME challenge). Or bring
   your own with `BD_CERT`/`BD_KEY`. No domain → self-signed (dev).
 
+**Push-to-deploy (live):** every push to `main` runs
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) — tests, builds
+the static binary, ships it over SSH, restarts the service. The live instance
+is **<https://35.202.101.31.sslip.io/>** (GCP always-free `e2-micro`, details in
+[`deploy/README.md`](deploy/README.md)).
+
 ```bash
-make build-linux                 # static linux/amd64 binary → bin/
-HOST=user@VM_IP ./deploy/deploy.sh   # build + scp + systemctl restart
+make build-linux                 # local static linux/amd64 binary → bin/
 ```
-
-Recommended target: **GCP always-free `e2-micro`** (us-west1/central1/east1) +
-a free **DuckDNS** domain + Let's Encrypt = **$0**. Steps in
-[`deploy/README.md`](deploy/README.md).
-
-**Push-to-deploy:** [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
-tests, builds the static binary, and ships it over SSH on every push (after a
-one-time VM setup + three repo secrets — see
-[`deploy/README.md` §5](deploy/README.md)). Until the secrets are set it just
-runs build+test and skips the deploy step.

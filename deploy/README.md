@@ -70,13 +70,17 @@ sudo systemctl daemon-reload
 sudo systemctl enable honeypot
 ```
 
-## 4. Deploy the binary (from your laptop)
+## 4. Deploy the binary
 
-The binary is self-contained (web pages, client JS, and scoring config are
-embedded) — you copy exactly one file.
+Deploys are automated — push to `main` and the GitHub Action (§5) builds and
+ships the binary. The binary is self-contained (web pages, client JS, and
+scoring config are embedded) — a deploy copies exactly one file, so a manual
+push from a laptop is just:
 
 ```bash
-HOST=USER@VM_IP ./deploy/deploy.sh
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/honeypot ./honeypot/server
+scp /tmp/honeypot USER@VM_IP:/tmp/honeypot
+ssh USER@VM_IP 'sudo install -m755 /tmp/honeypot /opt/honeypot/honeypot && sudo systemctl restart honeypot'
 ```
 
 First start, autocert fetches a cert from Let's Encrypt (needs :80 reachable — the
