@@ -1,20 +1,22 @@
-name: deploy
+name: release
 
-# Builds the self-contained linux binary and ships it to the VM over SSH, then
-# restarts the systemd service. One-time VM setup (user, /opt/honeypot, the
-# honeypot.service unit) is manual — see deploy/README.md.
-# Deploys on push to main (or manual dispatch).
+# On push to main (or manual dispatch): test, build the static linux binary
+# (assets embedded), and publish it as the "latest" GitHub Release asset. The VM
+# pulls that asset on a timer (deploy/update.sh) — no SSH, no secrets.
 on:
   push:
     branches: [main]
   workflow_dispatch: {}
 
+permissions:
+  contents: write
+
 concurrency:
-  group: deploy
-  cancel-in-progress: false
+  group: release
+  cancel-in-progress: true
 
 jobs:
-  deploy:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,38 +32,9 @@ jobs:
       - name: Build static linux/amd64 binary (assets embedded)
         run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o honeypot ./honeypot/server
 
-      - name: Deploy over SSH
+      - name: Publish to the "latest" release
         env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }} # e.g. deployer@34.9.8.7
-          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }} # private key (ed25519)
-          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }} # optional (ssh-keyscan output)
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          if [ -z "${DEPLOY_HOST:-}" ]; then
-            echo "::notice::DEPLOY_HOST secret not set — build+test passed, skipping deploy. See deploy/README.md §5."
-            exit 0
-          fi
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy
-          chmod 600 ~/.ssh/id_deploy
-          if [ -n "${DEPLOY_KNOWN_HOSTS:-}" ]; then
-            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
-            SSH_OPTS="-o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
-          else
-            SSH_OPTS="-o StrictHostKeyChecking=accept-new"
-          fi
-          SSH_OPTS="$SSH_OPTS -o IdentitiesOnly=yes -i $HOME/.ssh/id_deploy"
-
-          echo "→ copying binary…"
-          scp $SSH_OPTS honeypot "$DEPLOY_HOST:/tmp/honeypot"
-          echo "→ installing + restarting…"
-          # The deploy user owns /opt/honeypot (so install needs no sudo) and has
-          # exactly one NOPASSWD sudo rule: `systemctl restart honeypot`.
-          ssh $SSH_OPTS "$DEPLOY_HOST" '
-            install -m755 /tmp/honeypot /opt/honeypot/honeypot &&
-            sudo systemctl restart honeypot &&
-            sleep 1 && systemctl is-active honeypot'
-
-      - name: Cleanup key
-        if: always()
-        run: shred -u ~/.ssh/id_deploy 2>/dev/null || rm -f ~/.ssh/id_deploy
+          gh release create latest --title latest --notes "auto build ${{ github.sha }}" 2>/dev/null || true
+          gh release upload latest honeypot --clobber

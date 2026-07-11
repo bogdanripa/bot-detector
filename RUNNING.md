@@ -113,8 +113,9 @@ Recommended target: **GCP always-free `e2-micro`** (us-west1/central1/east1) +
 a free **DuckDNS** domain + Let's Encrypt = **$0**. Steps in
 [`deploy/README.md`](deploy/README.md).
 
-**Push-to-deploy:** [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
-tests, builds the static binary, and ships it over SSH on every push (after a
-one-time VM setup + three repo secrets — see
-[`deploy/README.md` §5](deploy/README.md)). Until the secrets are set it just
-runs build+test and skips the deploy step.
+**Push-to-deploy (no secrets, phone-friendly):**
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) tests, builds the
+static binary, and publishes it as the **`latest` GitHub Release** on every push to
+`main`. The VM pulls that release on a ~2-min timer (`deploy/update.sh`), so a push
+auto-deploys with no SSH and no secrets. Set up the VM with a 2-line startup script
+— **Option A** in [`deploy/README.md`](deploy/README.md).
