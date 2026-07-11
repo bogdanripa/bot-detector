@@ -1,4 +1,10 @@
-# 08 — Frontend / Report UI
+# 08 — Frontend / Report UI (the Honeypot Web App)
+
+> **This is the honeypot's web app** (`honeypot/web`), a **consumer of
+> `@botdetect/client`** ([docs/13](13-libraries-and-packaging.md)). It imports the
+> client library to collect signals and renders the report; it has no detection
+> logic of its own. Another consumer could collect with the same library and render
+> however it likes — this doc describes *our* reference UI.
 
 The app itself does the reporting: **a big green/red pass-or-fail banner with the
 automation probability, plus a checklist of every test with a status badge next to

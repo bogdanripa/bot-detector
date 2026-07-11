@@ -1,11 +1,23 @@
 # 07 — Scoring Engine (Automation Probability)
 
-This is where the tool earns its keep. It takes every captured signal — Layer 1
-(passive + form behavior), Layer 2, Layer 3 — and produces the headline output:
-an **automation probability** (0–100%), a green/amber/red band, and a checklist of
-every individual check. Single flags are weak; **contradictions between layers**
-are what a real detector weights, because a client can patch any one tell but
-struggles to keep all layers telling the same story.
+> **This is the spec for the scoring engine libraries** — `go/engine`
+> (authoritative) and `@botdetect/engine` (JS, for client-only deploys), both
+> interpreting the shared `config/scoring.json`
+> ([docs/13 §3.2](13-libraries-and-packaging.md#32-botdetectengine-ts--goengine-go--scoring),
+> [§6](13-libraries-and-packaging.md#6-scoring-config-one-source-two-engines)).
+> The engine is a **pure function** `SignalSet -> Report`: no I/O, deterministic,
+> and — critically — it accepts a **partial** `SignalSet`. Any absent layer is
+> scored around (see §4.2 and [docs/13 §4](13-libraries-and-packaging.md#4-the-capability-model-flexibility)),
+> which is what lets a consumer run client-only, server-only, or with Layer 3
+> missing.
+
+This is where the tool earns its keep. It takes every **captured** signal — Layer
+1 (passive + form behavior), Layer 2, Layer 3, or whatever subset was available —
+and produces the headline output: an **automation probability** (0–100%), a
+green/amber/red band, and a checklist of every individual check. Single flags are
+weak; **contradictions between layers** are what a real detector weights, because a
+client can patch any one tell but struggles to keep all layers telling the same
+story.
 
 ---
 

@@ -14,20 +14,35 @@ green/red pass-or-fail banner, and a checklist of every individual test.
 > detection, or attack third parties. Every signal it computes is about the
 > caller inspecting themselves.
 
-## The two decisions that shape everything
+## The project is two parts
+
+1. **Detection libraries** — small, composable, independently importable packages
+   that do the actual detection: a browser client lib (Layer 1 + form behavior),
+   Go server libs (Layer 2 HTTP capture, Layer 3 TLS/JA4/HTTP2 capture, IP/ASN),
+   and a scoring engine (Go + a JS port), all speaking a shared, versioned wire
+   schema. They're **flexible**: take all of them, or just the client-side piece,
+   or just the server-side piece, or everything except Layer 3. Any layer can be
+   absent — the engine scores whatever it gets and reports its coverage. See
+   [docs/13](docs/13-libraries-and-packaging.md).
+2. **The honeypot** — the deployable diagnostic app (the instrumented form + the
+   report UI). It's **one consumer** of the libraries, wiring them together into
+   the full three-layer, two-phase experience. It has no detection logic of its
+   own. See [docs/02](docs/02-deployment-topology.md) + [docs/08](docs/08-frontend-ui.md).
+
+## Two decisions that shape the honeypot
 
 1. **We self-host on a server that terminates its own TLS.** Not a Google Cloud
    Function, not any managed serverless platform — those sit behind the Google
    Front End, which terminates TLS and normalizes HTTP before our code runs, so
    the ClientHello (JA3/JA4), the HTTP/2 fingerprint, and the real header order
-   are gone. Owning the socket means we capture **all three detection layers from
-   a single connection**, with no edge probe and no correlation nonce. See
+   are gone. Owning the socket lets the honeypot capture **all three detection
+   layers from a single connection**. (A consumer that *can't* own the socket
+   still uses the same libraries — Layer 3 just reports `unavailable`.) See
    [docs/01](docs/01-architecture-and-hosting.md).
-
 2. **The headline is an automation probability (0–100%), not a pass/fail flag.**
-   Weighted evidence from every layer is run through a calibrated logistic so the
-   output reads as "≈93% likely automated," bucketed into a green/amber/red
-   banner. See [docs/07](docs/07-coherence-engine.md).
+   Weighted evidence from every available layer is run through a calibrated
+   logistic so the output reads as "≈93% likely automated," bucketed into a
+   green/amber/red banner. See [docs/07](docs/07-coherence-engine.md).
 
 ## How a visit works (two-phase detection)
 
@@ -68,9 +83,10 @@ the field *contents*.
 | 09 | [Reference fingerprints](docs/09-reference-data.md) | Known header orders, JA3/JA4, H2 settings, datacenter ASNs |
 | 10 | [Privacy, security & abuse](docs/10-privacy-security.md) | Data handling, rate limiting, legal posture |
 | 11 | [Testing & CI](docs/11-testing.md) | The validation matrix, automated harness, CI |
-| 12 | [Roadmap & milestones](docs/12-roadmap.md) | Ordered build steps with acceptance criteria |
+| 12 | [Roadmap & milestones](docs/12-roadmap.md) | Ordered build steps: libraries first, honeypot second |
+| 13 | [Libraries & packaging](docs/13-libraries-and-packaging.md) | The two-part split: package boundaries, public APIs, the capability model, distribution |
 
-Deployment target is now the single self-hosted server ("Topology C" in the
-architecture doc). The split app-plus-edge-probe design is retained only as a
+The honeypot self-hosts on a single server that terminates its own TLS. The split
+app-plus-edge-probe design is retained only as a
 [serverless fallback appendix](docs/02-deployment-topology.md#appendix--serverless-fallback-split-deployment)
-for anyone later forced onto a managed platform.
+for a consumer later forced onto a managed platform.

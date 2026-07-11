@@ -1,8 +1,14 @@
 # 04 — Layer 1: Browser Environment (Frontend JS)
 
-Everything in this layer is collected by JavaScript in the visitor's browser and
-POSTed to `/api/analyze`. It is the richest layer and the only one that works
-identically across all three deployment topologies.
+> **This is the spec for the `@botdetect/client` library**
+> ([docs/13 §3.1](13-libraries-and-packaging.md#31-botdetectclient-ts-browser--layer-1)).
+> A consumer imports it to collect Layer-1 signals; the honeypot is one such
+> consumer. The library returns plain objects and never assumes an endpoint — the
+> consumer owns transport.
+
+Everything in this layer is collected by JavaScript in the visitor's browser. It
+is the richest layer and the only one that works with **no server at all** (a
+client-only deployment can even score it in-browser via `@botdetect/engine`).
 
 **Design rules for every collector**
 

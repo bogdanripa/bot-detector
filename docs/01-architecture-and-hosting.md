@@ -24,6 +24,19 @@ terminates TLS in front of you — a CDN, a load balancer, or a managed serverle
 front end — the fingerprint you compute is *that intermediary's*, identical for
 every visitor, and useless.
 
+### 1.1 Layers are libraries; the honeypot is a consumer
+
+Each layer is implemented as an **independently importable library**, and the
+honeypot is just one app that composes them. This matters for hosting because the
+libraries are built to be **flexible**: whichever layers a given deployment can
+capture, it captures; the rest report `unavailable` and the scoring engine works
+around them. The honeypot happens to own its socket and so captures all three;
+another consumer (server-only, client-only, or behind a proxy) uses the same
+libraries with a smaller capability set. Package boundaries, public APIs, and the
+capability model are in [docs/13](13-libraries-and-packaging.md). The rest of this
+document is about the *honeypot's* hosting — the deployment that maximizes what the
+libraries can see.
+
 ---
 
 ## 2. Why we do **not** deploy on a Google Cloud Function

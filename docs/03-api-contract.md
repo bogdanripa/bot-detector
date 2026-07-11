@@ -1,8 +1,16 @@
 # 03 — API Contract
 
-Stable, versioned contract between the frontend and the self-hosted backend. All
-bodies are JSON, UTF-8. The report schema is versioned via `reportVersion` so the
-"copy JSON" output stays parseable as checks evolve.
+> **This is the spec for the `@botdetect/schema` / `go/schema` library**
+> ([docs/13 §3.6](13-libraries-and-packaging.md#36-botdetectschema--goschema--the-wire-contract)).
+> The shapes below are defined once as JSON Schema and code-generated into TS types
+> and Go structs, so the client lib and the engine can't drift. The two-phase HTTP
+> flow described here is the **honeypot's** integration; a different consumer may
+> move these same payloads over its own transport — the schema is the contract, the
+> endpoints are the honeypot's choice.
+
+Stable, versioned contract between the client library and the engine. All bodies
+are JSON, UTF-8. The report schema is versioned via `reportVersion` so the "copy
+JSON" output stays parseable as checks evolve.
 
 The flow is **two-phase** on one origin (see
 [docs/02 §2](02-deployment-topology.md#2-the-two-phase-api-flow)): the server

@@ -61,16 +61,29 @@ and that autofill/password-manager fills are not penalized.
 
 ## 2. Automated test layers
 
-### 2.1 Unit tests (per collector / per rule)
+### 2.1 Unit tests (per library, in isolation)
 
-- **Layer-1 collectors:** run in a headless browser (Playwright) and in jsdom; assert
-  each returns the right shape and doesn't throw when an API is missing.
-- **Coherence rules:** pure functions — table-driven Go tests. Each rule has
-  fixtures that fire it and fixtures that don't. This is where most of the value
-  is; rules must be individually pinned.
-- **JA3/JA4/H2 computation:** feed captured raw ClientHello / H2 preface bytes
-  from fixtures; assert the computed fingerprint matches the expected string/hash.
-- **Header-order distance:** table tests over reference vs. captured sequences.
+The two-part split ([docs/13 §8](13-libraries-and-packaging.md#8-testing-implications))
+means most coverage lives in the libraries; the honeypot gets only a thin e2e.
+
+- **`@botdetect/client` collectors:** run in a headless browser (Playwright) and in
+  jsdom; assert each returns the right shape and doesn't throw when an API is
+  missing.
+- **Engine rules (`go/engine`):** pure functions — table-driven Go tests. Each rule
+  has fixtures that fire it and fixtures that don't; rules must be individually
+  pinned.
+- **Engine degradation:** feed `SignalSet`s with layers set to nil and assert the
+  `coverage`, `confidence`, and verdict behave — the capability model
+  ([docs/13 §4](13-libraries-and-packaging.md#4-the-capability-model-flexibility))
+  is tested directly, not just via the honeypot.
+- **Go ↔ JS engine agreement:** run both engines over the same `SignalSet` fixtures
+  and assert the probability matches within tolerance (same `scoring.json`).
+- **`go/tlscapture` JA3/JA4/H2:** feed captured raw ClientHello / H2 preface bytes;
+  assert the computed fingerprint matches the expected string/hash; assert
+  `ForConn` returns nil when TLS wasn't terminated locally.
+- **`go/httpcapture` header-order:** table tests over reference vs. captured
+  sequences; assert order is `unavailable` without a socket-owning listener.
+- **`go/ipasn`:** IP fixtures → expected ASN/datacenter classification.
 
 ### 2.2 Golden report tests (the regression backbone)
 

@@ -1,5 +1,13 @@
 # 06 — Layer 3: Transport Fingerprinting
 
+> **This is the spec for two libraries:** `go/tlscapture` (TLS ClientHello →
+> JA3/JA4 + HTTP/2 fingerprint, [docs/13 §3.4](13-libraries-and-packaging.md#34-gotlscapture-go--layer-3-transport))
+> and `go/ipasn` (IP → ASN + datacenter classification,
+> [docs/13 §3.5](13-libraries-and-packaging.md#35-goipasn-go--layer-3-ipasn)).
+> `tlscapture` only works when the consumer terminates its own TLS; behind a proxy
+> it reports `unavailable`. `ipasn` is independent and works wherever a client IP
+> is known.
+
 The strongest layer, because it is the hardest to fake from a scripting client
 and the client controls it least directly: TLS ClientHello (→ JA3/JA4), the
 HTTP/2 fingerprint, and IP/ASN reputation.

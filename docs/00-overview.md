@@ -30,6 +30,14 @@ The differentiator versus existing tools (`bot.sannysoft.com`, `browserleaks.com
 (the TLS stack says Go, the User-Agent says Chrome) rather than treating each
 flag in isolation, expressed as one calibrated probability.
 
+**The project is two parts.** The detection logic ships as a set of composable,
+independently importable **libraries** (a browser client lib, Go server libs for
+Layers 2–3, and a scoring engine), flexible enough to use piecemeal — client-only,
+server-only, or with a layer absent. The **honeypot** is the deployable diagnostic
+app that consumes those libraries as its reference integration. See
+[docs/13](13-libraries-and-packaging.md) for the packaging, and this doc set's
+per-layer chapters for the detection detail each library implements.
+
 ## 2. Goals
 
 1. **Comprehensive** — cover all three detection layers to the extent the
@@ -47,6 +55,9 @@ flag in isolation, expressed as one calibrated probability.
    not pollute the very fingerprint it is measuring.
 6. **Reproducible** — the same client hitting the tool twice should get the same
    verdict (modulo behavioral signals, which are inherently noisy).
+7. **Composable** — detection ships as independently importable libraries, usable
+   piecemeal (client-only, server-only, or with a layer absent); the honeypot is
+   just one consumer. See [docs/13](13-libraries-and-packaging.md).
 
 ## 3. Non-goals (hard boundaries)
 

@@ -1,5 +1,12 @@
 # 05 — Layer 2: HTTP (Backend)
 
+> **This is the spec for the `go/httpcapture` library**
+> ([docs/13 §3.3](13-libraries-and-packaging.md#33-gohttpcapture-go--layer-2)). It
+> drops into any `net/http` server as middleware. Header **values** work from any
+> `*http.Request`; header **order** requires owning the socket (populated by
+> `go/tlscapture`'s listener), so a consumer behind a proxy gets values but a
+> `null` order that scores as `unavailable`.
+
 Signals derived from the HTTP request itself: header **values**, header **order**,
 client hints, `Sec-Fetch-*`, and their consistency with the User-Agent.
 

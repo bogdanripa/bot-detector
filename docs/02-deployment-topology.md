@@ -1,15 +1,24 @@
-# 02 — Deployment
+# 02 — Deploying the Honeypot
 
-Concrete infrastructure for the chosen design: **a single self-hosted Go server
-that terminates its own TLS and captures all three layers on one connection**,
-serving a two-phase detection flow. The old split-with-edge-probe design is kept
-only as a [serverless fallback appendix](#appendix--serverless-fallback-split-deployment).
+Concrete infrastructure for **the honeypot** — the deployable app that composes the
+detection libraries ([docs/13](13-libraries-and-packaging.md)) into the full
+three-layer, two-phase experience: **a single self-hosted Go server that
+terminates its own TLS and captures all three layers on one connection**. The old
+split-with-edge-probe design is kept only as a
+[serverless fallback appendix](#appendix--serverless-fallback-split-deployment).
+
+> The honeypot has **no detection logic of its own**. Its server imports
+> `go/tlscapture`, `go/httpcapture`, `go/ipasn`, and `go/engine`; its web app
+> imports `@botdetect/client`. This doc is about how it wires them together and the
+> infrastructure it runs on. A different consumer with a smaller capability set
+> (server-only, client-only, behind a proxy) uses the same libraries — see
+> [docs/13 §5](13-libraries-and-packaging.md#5-integration-recipes).
 
 ---
 
-## 1. The server
+## 1. The server (library composition)
 
-One Go binary does everything:
+One Go binary composes the libraries and does everything:
 
 ```
 GET  /                → serves index.html (the instrumented form) + a bootstrap
