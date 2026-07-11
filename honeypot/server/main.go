@@ -21,20 +21,22 @@ import (
 	"sync"
 	"time"
 
+	botdetector "github.com/bogdanripa/bot-detector"
 	"github.com/bogdanripa/bot-detector/go/engine"
 	"github.com/bogdanripa/bot-detector/go/httpcapture"
 	"github.com/bogdanripa/bot-detector/go/ipasn"
 	"github.com/bogdanripa/bot-detector/go/schema"
 	"github.com/bogdanripa/bot-detector/go/tlscapture"
+	"golang.org/x/crypto/acme/autocert"
 )
 
 var (
 	capt        = tlscapture.New()
 	classifier  = ipasn.New()
 	eng         *engine.Engine
-	webDir      = envOr("BD_WEB_DIR", "honeypot/web")
-	clientJS    = envOr("BD_CLIENT_JS", "packages/client/botdetect.js")
-	scoringPath = envOr("BD_SCORING", "config/scoring.json")
+	webDir      = os.Getenv("BD_WEB_DIR")   // "" ⇒ embedded assets
+	clientJS    = os.Getenv("BD_CLIENT_JS") // "" ⇒ embedded
+	scoringPath = os.Getenv("BD_SCORING")   // "" ⇒ embedded
 	addr        = envOr("BD_ADDR", ":8443")
 	// enforceBand is the /test blocking threshold. "suspicious" (default) is
 	// aggressive: block anything not clearly human. "automated" is conservative.
@@ -52,7 +54,7 @@ func bandRank(b string) int {
 }
 
 func main() {
-	cfg, err := os.ReadFile(scoringPath)
+	cfg, err := readScoring()
 	must(err)
 	eng, err = engine.New(cfg)
 	must(err)
@@ -80,11 +82,36 @@ func main() {
 	mux.HandleFunc("/botdetect.js", handleClientJS)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 
-	tlsCfg := &tls.Config{
-		Certificates: []tls.Certificate{selfSigned()},
-		MinVersion:   tls.VersionTLS12,
-		NextProtos:   []string{"http/1.1"}, // http/1.1 only ⇒ reliable header-order capture
+	// http/1.1 only ⇒ reliable header-order capture. We terminate TLS ourselves
+	// (no proxy in front) so the ClientHello reaches tlscapture.
+	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}}
+	domain := os.Getenv("BD_DOMAIN")
+	certFile, keyFile := os.Getenv("BD_CERT"), os.Getenv("BD_KEY")
+	switch {
+	case domain != "":
+		// Let's Encrypt, in-process (auto-issue + auto-renew). Needs :80 for the
+		// HTTP-01 challenge and a writable cache dir.
+		mgr := &autocert.Manager{
+			Prompt:     autocert.AcceptTOS,
+			HostPolicy: autocert.HostWhitelist(strings.Split(domain, ",")...),
+			Cache:      autocert.DirCache(envOr("BD_CERT_CACHE", "certs")),
+		}
+		tlsCfg.GetCertificate = mgr.GetCertificate
+		go func() {
+			log.Printf("acme/redirect http listener on :80")
+			log.Fatal(http.ListenAndServe(":80", mgr.HTTPHandler(http.HandlerFunc(redirectHTTPS))))
+		}()
+		log.Printf("TLS: Let's Encrypt autocert for %q", domain)
+	case certFile != "" && keyFile != "":
+		crt, err := tls.LoadX509KeyPair(certFile, keyFile)
+		must(err)
+		tlsCfg.Certificates = []tls.Certificate{crt}
+		log.Printf("TLS: cert files %s / %s", certFile, keyFile)
+	default:
+		tlsCfg.Certificates = []tls.Certificate{selfSigned()}
+		log.Printf("TLS: self-signed (dev)")
 	}
+
 	rawLn, err := net.Listen("tcp", addr)
 	must(err)
 	ln := capt.InstrumentListener(rawLn, tlsCfg)
@@ -93,11 +120,35 @@ func main() {
 		Handler:     logMiddleware(mux),
 		ReadTimeout: 15 * time.Second,
 		IdleTimeout: 30 * time.Second,
-		ConnContext: nil,
 	}
 	go sweepSessions()
-	log.Printf("honeypot listening on https://localhost%s  (self-signed TLS, http/1.1)", addr)
+	log.Printf("honeypot listening on %s (https, http/1.1)", addr)
 	log.Fatal(srv.Serve(ln))
+}
+
+func redirectHTTPS(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "https://"+r.Host+r.URL.RequestURI(), http.StatusMovedPermanently)
+}
+
+// ---- asset loading: embedded by default, disk override for dev ----
+
+func readScoring() ([]byte, error) {
+	if scoringPath != "" {
+		return os.ReadFile(scoringPath)
+	}
+	return botdetector.ScoringJSON, nil
+}
+func readWeb(name string) ([]byte, error) {
+	if webDir != "" {
+		return os.ReadFile(webDir + "/" + name)
+	}
+	return botdetector.WebFS.ReadFile("honeypot/web/" + name)
+}
+func readClient() ([]byte, error) {
+	if clientJS != "" {
+		return os.ReadFile(clientJS)
+	}
+	return botdetector.ClientJS, nil
 }
 
 // ---- sessions ----
@@ -315,7 +366,7 @@ func serverOnlyBot(s *session) bool {
 }
 
 func serveForbidden(w http.ResponseWriter, status int, reason string) {
-	b, err := os.ReadFile(webDir + "/forbidden.html")
+	b, err := readWeb("forbidden.html")
 	if err != nil {
 		http.Error(w, "Forbidden — automated traffic is not allowed here.", status)
 		return
@@ -371,7 +422,7 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleClientJS(w http.ResponseWriter, r *http.Request) {
-	b, err := os.ReadFile(clientJS)
+	b, err := readClient()
 	if err != nil {
 		http.Error(w, "client not found", http.StatusInternalServerError)
 		return
@@ -387,7 +438,7 @@ func rawEcho(s *session) map[string]any {
 }
 
 func servePage(w http.ResponseWriter, name string, boot map[string]any) {
-	b, err := os.ReadFile(webDir + "/" + name)
+	b, err := readWeb(name)
 	if err != nil {
 		http.Error(w, "page not found: "+name, http.StatusInternalServerError)
 		return

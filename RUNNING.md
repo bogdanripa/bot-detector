@@ -92,10 +92,23 @@ proof.
 - A calibrated `scoring.json` from captured fixtures (weights are hand-set defaults).
 - Web Bot Auth signature verification (presence check only).
 
-## Deploy (sketch)
+## Deploy
 
-For production, replace the self-signed cert with a real one (the server owns TLS,
-so **no CDN/managed-TLS proxy in front** or Layer 3 is lost — see docs/01):
-point DNS at a VM with a static IP, terminate TLS in-process (autocert or cert
-files), open 443, run behind systemd. See docs/02 §6–7. We can pick a concrete
-target together.
+**Full free (GCP) walkthrough: [`deploy/README.md`](deploy/README.md).** In short:
+
+- The server owns TLS (JA3/JA4 capture), so it runs on a **plain VM — never behind
+  a CDN / managed-TLS load balancer**, or Layer 3 is lost.
+- It's a **single self-contained binary** — web pages, client JS, and scoring
+  config are **embedded** (`embed.go`). You copy one file.
+- TLS is auto-managed: set `BD_DOMAIN=you.example.com` and it fetches + renews a
+  **Let's Encrypt** cert in-process (needs :80 for the ACME challenge). Or bring
+  your own with `BD_CERT`/`BD_KEY`. No domain → self-signed (dev).
+
+```bash
+make build-linux                 # static linux/amd64 binary → bin/
+HOST=user@VM_IP ./deploy/deploy.sh   # build + scp + systemctl restart
+```
+
+Recommended target: **GCP always-free `e2-micro`** (us-west1/central1/east1) +
+a free **DuckDNS** domain + Let's Encrypt = **$0**. Steps in
+[`deploy/README.md`](deploy/README.md).

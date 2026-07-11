@@ -1,0 +1,29 @@
+[Unit]
+Description=Bot-detector honeypot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=honeypot
+Group=honeypot
+WorkingDirectory=/opt/honeypot
+ExecStart=/opt/honeypot/honeypot
+
+# ---- config (edit these) ----
+Environment=BD_ADDR=:443
+Environment=BD_DOMAIN=CHANGE-ME.duckdns.org
+Environment=BD_CERT_CACHE=/opt/honeypot/certs
+Environment=BD_ENFORCE_BAND=suspicious
+# Optional full IP→ASN coverage (see deploy/README.md):
+# Environment=BD_IPASN_TSV=/opt/honeypot/ip2asn-v4.tsv.gz
+
+# Bind :80/:443 without running as root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -24,3 +24,6 @@ package-lock.json
 
 # IP-to-ASN dataset (fetched at deploy; free/public-domain)
 /data/
+
+# autocert cert cache (runtime)
+certs/
