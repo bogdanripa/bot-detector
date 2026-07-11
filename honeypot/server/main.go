@@ -464,12 +464,17 @@ type checksView struct {
 // result page's own bd-* report styles.
 var checksTmpl = template.Must(template.New("checks").Parse(`
 <style>
-  .bds-side { position: fixed; top: 0; right: 0; bottom: 0; width: 340px; overflow-y: auto;
-              box-sizing: border-box; padding: 1rem 1.1rem 2rem; border-left: 1px solid #8884;
-              background: #fafafa; font-size: .9rem; line-height: 1.45; }
+  .bds-side { box-sizing: border-box; padding: 1rem 1.1rem 2rem; border: 1px solid #8884;
+              border-radius: 12px; margin: 2rem 0; background: #fafafa;
+              font-size: .9rem; line-height: 1.45; }
   @media (prefers-color-scheme: dark) { .bds-side { background: #161616; } }
-  @media (max-width: 1439px) { .bds-side { position: static; width: auto; border: 1px solid #8884;
-              border-radius: 12px; margin: 2rem 0; overflow: visible; } }
+  @media (min-width: 1500px) {
+    .bds-side { position: fixed; top: 0; right: 0; bottom: 0; width: var(--bds-w, 400px);
+                overflow-y: auto; border: 0; border-left: 1px solid #8884; border-radius: 0; margin: 0; }
+    /* drag handle: grab the left edge to resize (botdetect.js) */
+    .bds-side::before { content: ""; position: fixed; top: 0; bottom: 0; right: calc(var(--bds-w, 400px) - 5px);
+                width: 10px; cursor: ew-resize; }
+  }
   .bds-side h2 { font-size: 1.02rem; margin: .2rem 0 .8rem; }
   .bds-banner { display: flex; align-items: center; gap: .8rem; border: 3px solid; border-radius: 10px;
               padding: .45rem .8rem; margin-bottom: .8rem; }
@@ -481,7 +486,8 @@ var checksTmpl = template.Must(template.New("checks").Parse(`
   .bds-checks td { border-top: 1px solid #8883; padding: .35rem .25rem; vertical-align: top; }
   .bds-badge { color: #fff; font-size: .62rem; font-weight: 700; padding: .1rem .35rem; border-radius: 4px; }
   .bds-exp { color: #888; font-size: .78rem; }
-  .bds-val { font-family: ui-monospace, monospace; font-size: .7rem; color: #777; word-break: break-all; }
+  .bds-val { font-family: ui-monospace, monospace; font-size: .7rem; color: #777;
+              overflow-wrap: anywhere; width: 32%; }
   .bds-note { color: #888; font-size: .78rem; margin-bottom: 0; }
 </style>
 <aside class="bds-side">

@@ -277,6 +277,36 @@
   }
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
 
+  // ---------- debug sidebar resize (drag the left edge; width persists) ----------
+  function initSidebarResize() {
+    var el = document.querySelector("aside.bds-side");
+    if (!el) return;
+    try {
+      var saved = parseInt(localStorage.getItem("bds-w"), 10);
+      if (saved) document.documentElement.style.setProperty("--bds-w", saved + "px");
+    } catch (e) {}
+    var dragging = false;
+    function fixed() { return getComputedStyle(el).position === "fixed"; }
+    el.addEventListener("pointerdown", function (e) {
+      if (!fixed() || e.clientX - el.getBoundingClientRect().left > 10) return;
+      dragging = true;
+      e.preventDefault();
+      document.body.style.userSelect = "none";
+    });
+    addEventListener("pointermove", function (e) {
+      if (!dragging) return;
+      var w = Math.round(window.innerWidth - e.clientX);
+      w = Math.max(300, Math.min(w, window.innerWidth - 760));
+      document.documentElement.style.setProperty("--bds-w", w + "px");
+    });
+    addEventListener("pointerup", function () {
+      if (!dragging) return;
+      dragging = false;
+      document.body.style.userSelect = "";
+      try { localStorage.setItem("bds-w", parseInt(getComputedStyle(el).width, 10)); } catch (e) {}
+    });
+  }
+
   // ---------- debug sidebar (server-rendered; re-rendered here when new
   // signals are posted mid-page, e.g. the passive Layer 1 snapshot on load) ----------
   function renderSidebar(report) {
@@ -349,6 +379,7 @@
 
   function initHoneypot() {
     var link, form;
+    initSidebarResize();
     if (BOOT.step === "landing") {
       var passive = null;
       collectPassive().then(function (l1) {
