@@ -8,6 +8,21 @@ Total cost target: **$0** — free VM + free DuckDNS domain + free Let's Encrypt
 
 ---
 
+## Live deployment (current)
+
+| | |
+|---|---|
+| URL | <https://35.202.101.31.sslip.io/> |
+| GCP | project `auto-trader-493814`, instance `honeypot`, zone `us-central1-c`, `e2-micro` |
+| IP | `35.202.101.31` — reserved static (`honeypot-ip`, us-central1) |
+| Domain | sslip.io (zero-config DNS: the hostname *is* the IP), Let's Encrypt autocert |
+| Deploy | push to this repo → `.github/workflows/deploy.yml` builds, ships over SSH as `deployer`, restarts `honeypot.service` |
+
+Secrets `DEPLOY_HOST` / `DEPLOY_SSH_KEY` / `DEPLOY_KNOWN_HOSTS` are set in the repo.
+The sections below document how this was set up from scratch.
+
+---
+
 ## 1. Create the free VM
 
 Always-free `e2-micro` is free only in **us-west1 / us-central1 / us-east1**.
