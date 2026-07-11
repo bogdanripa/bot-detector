@@ -4,24 +4,24 @@ The strongest layer, because it is the hardest to fake from a scripting client
 and the client controls it least directly: TLS ClientHello (→ JA3/JA4), the
 HTTP/2 fingerprint, and IP/ASN reputation.
 
-> **Deployment reality (read first).** Layer 3 requires that **your own code
-> terminates TLS**. A **plain Cloud Function cannot capture any of §1–2** — the
-> Google Front End terminates TLS and speaks a fresh HTTP connection to your
-> container (see [docs/01 §2](01-architecture-and-hosting.md)). Layer 3 TLS/H2 is
-> therefore captured on the **edge probe (Topology B)** or a **self-managed TLS
-> host (Topology C)**. IP/ASN (§3) works on all topologies via `X-Forwarded-For`.
-> On Topology A, §1–2 render as `unavailable` and are excluded from scoring.
+> **This whole layer is why we self-host.** Layer 3 requires that **our own code
+> terminates TLS**. A managed serverless front end (Cloud Function/Run behind the
+> Google Front End) terminates TLS and opens a fresh connection to your container,
+> so the ClientHello and HTTP/2 fingerprint never reach you (see
+> [docs/01 §2](01-architecture-and-hosting.md#2-why-we-do-not-deploy-on-a-google-cloud-function)).
+> On the self-hosted server, all of it is captured on the page-navigation
+> connection and joined to the session.
 
 ---
 
-## 1. What we capture and where
+## 1. What we capture
 
-| Signal | Source | Topology A | Topology B (probe) | Topology C |
-|--------|--------|:---------:|:------------------:|:----------:|
-| TLS JA3 / JA4 | ClientHello | ❌ | ✅ | ✅ |
-| TLS version, ALPN, cipher/curve/extension order | ClientHello | ❌ | ✅ | ✅ |
-| HTTP/2 SETTINGS, WINDOW_UPDATE, pseudo-header order | H2 preface/frames | ❌ | ✅ | ✅ |
-| IP / ASN / datacenter | `X-Forwarded-For` (A) or socket `RemoteAddr` (B/C) | ✅ | ✅ | ✅ |
+| Signal | Source | Available on the self-hosted server |
+|--------|--------|:-----------------------------------:|
+| TLS JA3 / JA4 | ClientHello (`GetConfigForClient`) | ✅ |
+| TLS version, ALPN, cipher/curve/extension order | ClientHello | ✅ |
+| HTTP/2 SETTINGS, WINDOW_UPDATE, pseudo-header order | H2 preface/frames | ✅ |
+| IP / ASN / datacenter | socket `RemoteAddr` | ✅ |
 
 ---
 
@@ -157,21 +157,22 @@ Go's stock `http2.Server` abstracts frames away, so read them explicitly:
   reader (`http2.NewFramer`) to read the initial `SETTINGS` and `WINDOW_UPDATE`
   frames and the first `HEADERS` frame (for pseudo-header order via an HPACK
   decoder) before either serving the request minimally or resetting the stream.
-- This is the same raw-socket host as the TLS capture, so it's one code path on
-  the edge probe.
+- This is the same connection as the TLS capture, so it's one code path on the
+  self-hosted server.
 
 ---
 
-## 4. IP reputation / ASN (works on all topologies)
+## 4. IP reputation / ASN
 
 Resolve the visitor IP → ASN and organization; flag datacenter/cloud ranges.
 
 ### 4.1 Getting the IP
 
-- **Topology A:** left-most client entry of `X-Forwarded-For` (validate it parses,
-  isn't private/reserved) — see [docs/01 §5.4](01-architecture-and-hosting.md#54-getting-the-real-client-ip-behind-the-gfe).
-- **Topology B/C:** the socket `RemoteAddr` on the probe is the real client egress
-  IP; prefer it and cross-check against the app's XFF.
+- On the self-hosted server the socket `RemoteAddr` **is** the client's egress IP —
+  no `X-Forwarded-For` trust problem. Validate it parses and isn't
+  private/reserved.
+- If you deliberately front the box with an L4 proxy, honor `PROXY protocol` or a
+  single trusted `X-Forwarded-For` hop; otherwise use `RemoteAddr`.
 
 ### 4.2 ASN classification
 
@@ -183,10 +184,13 @@ Resolve the visitor IP → ASN and organization; flag datacenter/cloud ranges.
 - Optionally integrate a reputation source (MaxmMind GeoLite2 ASN, IPinfo,
   Team Cymru IP-to-ASN via DNS) behind an interface, so the static list is the
   offline default and a richer source can be swapped in.
-- **Verdict:** datacenter/cloud/hosting ASN → `suspicious` (real users are usually
-  on residential/mobile ASNs). Not automation *per se* (developers browse from
-  cloud shells; users use VPNs), but it's a meaningful input, and it's a core part
-  of the classic automation cluster (datacenter IP + UTC timezone + `en-US`).
+- **Status:** datacenter/cloud/hosting ASN → `warn` (a solid contributor,
+  +0.9 log-odds — see [docs/07 §2.5](07-coherence-engine.md#25-transport-layer-3)),
+  not a `fail` on its own. Real users are mostly on residential/mobile ASNs, but
+  developers browse from cloud shells and users route through VPNs, so a datacenter
+  IP is a **red flag, not proof**. It becomes decisive only in the classic cluster
+  (datacenter IP + `UTC`/mismatched timezone + `en-US` + a scripting-stack TLS
+  fingerprint), which the `lang_tz_ip_cluster` contradiction captures.
 
 ### 4.3 Geolocation join
 
@@ -202,7 +206,7 @@ datacenter IP in `us-east-1` with a client timezone of `Europe/Bucharest` and
 ```jsonc
 "layer3": {
   "available": true,
-  "capturedBy": "edge-probe",       // "edge-probe" | "local" | "unavailable"
+  "capturedBy": "navigation",       // captured at GET / on the self-hosted server
   "tls": {
     "version": "TLS 1.3",
     "ja3": "769,4865-4866-…", "ja3Hash": "e7d705a3286e19ea42f587b344ee6865",
@@ -215,12 +219,10 @@ datacenter IP in `us-east-1` with a client timezone of `Europe/Bucharest` and
     "matchedStack": "chrome", "pseudoHeaderOrder": [":method",":authority",":scheme",":path"]
   },
   "ip": { "addr": "203.0.113.9", "asn": 7922, "org": "COMCAST-7922", "isDatacenter": false,
-          "country": "US", "geoTimezone": "America/New_York" },
-  "sameClientAsApp": true            // probe IP/UA matched the analyze request (Topology B)
+          "country": "US", "geoTimezone": "America/New_York" }
 }
 ```
 
-On Topology A this whole block is `{"available": false, "capturedBy": "unavailable",
-"reason": "Managed front end terminates TLS; deploy the edge probe to capture Layer 3."}`
-and every Layer-3 signal is emitted with `verdict: "unavailable"`, excluded from
-the score, with the score's `confidence` reduced accordingly.
+If a specific transport probe can't run (e.g. the client negotiated HTTP/1.1 so
+there's no H2 fingerprint), that field renders `unavailable` and is excluded from
+scoring — but TLS/JA4 and IP/ASN are always available on the self-hosted server.

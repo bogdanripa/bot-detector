@@ -1,184 +1,184 @@
 # 12 — Roadmap & Milestones
 
 Ordered build steps, each with a concrete acceptance criterion. The ordering
-front-loads the highest-signal, verify-early work (header capture, then TLS) so
-you find out immediately whether the hard parts work on your infrastructure —
-exactly the risk the Google-Cloud-Function target introduces.
+front-loads the highest-risk, highest-signal work — **proving raw TLS capture on
+the self-hosted box (Milestone 1)** — because if owning the socket doesn't yield a
+real ClientHello on your host, the whole Layer-3 thesis is gone and you want to
+know that before building anything on top of it.
 
-The single most important sequencing decision: **prove the edge-probe transport
-capture works early (Milestone 3)**, because if it doesn't, the whole Layer-3
-value proposition is gone and you'd rather know before building the UI on top of
-it.
+Target deployment: the **single self-hosted TLS-terminating server** with the
+**two-phase** flow and an **automation-probability** headline.
 
 ---
 
-## Milestone 0 — Scaffold & decision lock
+## Milestone 0 — Scaffold
 
-**Goal:** repo skeleton, topology chosen, config plumbing.
+**Goal:** repo skeleton and a TLS-terminating server that serves a page.
 
-- Go module for the main app; `embed.FS` for static assets; `/`, `/api/health`,
-  `/api/analyze` (stub returning `{}`).
-- `CAPTURE_MODE` env plumbing (`a`/`b`/`c`) so coverage labeling exists from day
-  one.
-- Dockerfile + Cloud Run deploy of the stub.
-- **Accept:** stub deploys to Cloud Run behind `app.example.com`; `/api/health`
-  returns 200; a request logs the *filtered* client headers (GFE injections
-  removed).
+- Go module; `embed.FS` for static assets; `GET /`, `GET /api/health`,
+  `POST /api/analyze` (stub returning `{}`).
+- In-process TLS via `autocert` (prod) and `mkcert` (local `app.localtest.me`).
+- `sessionId` minting at `GET /` + `Secure;HttpOnly;SameSite=Strict` cookie +
+  bootstrap island.
+- **Accept:** server terminates its own TLS locally and in prod; `/api/health`
+  200; a page load mints a session and logs the client's socket IP.
 
-## Milestone 1 — Layer 2 header capture + hygiene
+## Milestone 1 — TLS / JA4 capture ⭐ critical-path
 
-**Goal:** read and analyze header **values**, prove header **order** is lost on
-Cloud Function.
+**Goal:** prove we capture the real client ClientHello on our own socket.
 
-- Header value analysis ([docs/05 §1–2](05-layer2-http.md)).
-- Infrastructure-header deny-list ([docs/02 §1.4](02-deployment-topology.md#14-header-hygiene-filter-gfe-injections)).
-- **Verify the GFE problem empirically:** hit the Cloud Function with curl and a
-  real browser; confirm the header *order* your handler sees does **not** match
-  the client's emission order (it's been normalized). Document the finding.
-- **Accept:** report shows Layer-2 values; header-order signal is correctly
-  marked `unavailable/normalized` on Topology A. curl vs. browser produce
-  different *value* signals.
-
-## Milestone 2 — Layer 1 collectors + end-to-end report (Topology A)
-
-**Goal:** a working, honest, layers-1–2 diagnostic on a plain Cloud Function.
-
-- Build each Layer-1 collector as an independent module
-  ([docs/04](04-layer1-browser.md)), each testable in isolation.
-- Add the behavioral collector (buffer ~3s, then submit).
-- Implement the coherence engine for L1+L2 ([docs/07](07-coherence-engine.md)),
-  with weights/thresholds in config.
-- Build the report UI ([docs/08](08-frontend-ui.md)) + "copy JSON".
-- **Accept:** deployed Topology-A tool correctly scores real Chrome
-  `likely_human` and vanilla Puppeteer `likely_automated`; `curl + Chrome UA` is
-  caught on Layer-2 values; Layer-3 section honestly says "unavailable."
-
-> At this point you have a **shippable, useful product** — just without the
-> strongest transport signals. Everything after this is raising the ceiling.
-
-## Milestone 3 — Edge probe: TLS/JA4 capture (Topology B) ⭐ critical-path
-
-**Goal:** prove you can capture the real client ClientHello on a raw-socket host.
-
-- Stand up the edge probe on a VM/VPS with a static IP and `tls.example.com`
-  (autocert). Terminate TLS in Go.
 - Capture the ClientHello via `GetConfigForClient` + a raw-ClientHello tee for
   extension order; compute JA3 + JA4 ([docs/06 §2](06-layer3-transport.md#2-ja3--ja4)).
-- **Verify curl and Chrome produce different JA4** against the probe — the core
-  proof the whole layer works.
-- **Accept:** hitting `tls.example.com` from Chrome yields a browser JA4; from
-  curl/Go yields a library JA4; the two are clearly different.
+- Bind the per-connection fingerprint to the session created at `GET /`.
+- **Verify Chrome vs. curl produce different JA4** against the server — the core
+  proof the layer works.
+- **Accept:** a page load from Chrome yields a browser JA4; from curl/Go a library
+  JA4; the two clearly differ and are attached to the session.
 
-## Milestone 4 — Correlation + merge (Topology B end-to-end)
+## Milestone 2 — Layer 2 capture (values + true order) + hygiene
 
-**Goal:** stitch the probe's transport report into the app's report.
+**Goal:** header values and real order from the navigation.
 
-- Nonce mint → embed → probe fetch → store → `/api/analyze` merge
-  ([docs/02 §3](02-deployment-topology.md#3-correlation-protocol)); in-memory
-  probe map + authenticated `/result` for MVP.
-- CORS on the probe locked to the app origin; keep the probe fetch a simple GET
-  (no preflight).
-- Same-client verification (probe IP/UA vs. app) + all failure-mode degradations.
-- Wire `tls_ua_vendor_mismatch` and friends into the engine.
-- **Accept:** the report now shows Layer 3; `curl + Chrome UA` trips
-  `tls_ua_vendor_mismatch`; killing the probe degrades cleanly to Topology-A
-  scoring with the "probe unreachable" label.
+- Read header **values** and true **order** from the `GET /` navigation
+  ([docs/05](05-layer2-http.md)); store on the session.
+- Hop-by-hop / proxy header hygiene ([docs/02 §1.3](02-deployment-topology.md#13-header-hygiene)).
+- **Accept:** curl vs. Chrome differ on both header values *and* order; the order
+  matches known browser/library reference shapes.
 
-## Milestone 5 — HTTP/2 fingerprint + header order on the probe
+## Milestone 3 — Layer 1 passive collectors + phase-1 report
 
-**Goal:** the remaining Layer-2/3 transport signals.
+**Goal:** a working phase-1 report (passive server + client) with a pass/fail
+banner.
 
-- Read the H2 preface/frames on the probe; compute the Akamai-style H2 fingerprint
-  and pseudo-header order ([docs/06 §3](06-layer3-transport.md#3-http2-fingerprint)).
-- Capture true header **order** on the probe connection
-  ([docs/05 §3](05-layer2-http.md#3-header-order)).
-- Wire `h2_ua_vendor_mismatch` and `header_order_is_library`.
-- **Accept:** H2 and header-order signals populate for probe-captured
-  connections; scripting H2 clients are distinguishable from browsers.
+- Each Layer-1 passive collector as an independent module
+  ([docs/04 §2.1–2.7](04-layer1-browser.md)).
+- `POST /api/analyze {phase:1}` merges connection signals + passive Layer 1.
+- **Accept:** phase-1 report renders for real Chrome (clean) and vanilla Puppeteer
+  (multiple `fail`s), joining all three layers on one connection.
 
-## Milestone 6 — IP/ASN + locale/timezone coherence
+## Milestone 4 — Scoring engine v1 (automation probability)
 
-**Goal:** the geo/network cross-checks.
+**Goal:** the calibrated-logistic headline + banner + checklist.
 
-- IP extraction (XFF on app, socket on probe), static datacenter-ASN list,
-  optional provider behind an interface ([docs/06 §4](06-layer3-transport.md#4-ip-reputation--asn-works-on-all-topologies)).
-- Timezone/locale joins: `Intl` tz vs. IP-geo tz; `Accept-Language` vs.
-  `navigator.languages`; the datacenter+UTC+en-US cluster rule.
-- **Accept:** a datacenter-hosted client with mismatched locale trips
-  `lang_tz_ip_cluster`; residential real browser does not.
+- Signal weights, `b0`, caps, and thresholds in one config
+  ([docs/07 §2–4](07-coherence-engine.md)).
+- Contradiction rules registry, incl. `tls_ua_vendor_mismatch`,
+  `header_order_is_library`, `os_triangulation_mismatch`.
+- Logistic → probability → band; `critical floor`; confidence.
+- **Accept:** real Chrome ≈5% (`human`/PASS); `curl+Chrome UA` ≈99%
+  (`automated`/FAIL) via `tls_ua_vendor_mismatch`; the report exposes a
+  `scoreTrace` in debug mode.
 
-## Milestone 7 — Reference data + golden tests
+## Milestone 5 — The form + phase-2 behavior
 
-**Goal:** turn illustrative references into captured real data and pin the matrix.
+**Goal:** the instrumented homepage form and the behavioral refinement pass.
 
-- Capture real fixtures for every matrix row ([docs/11 §3](11-testing.md#3-capturing-fixtures-how-to-build-the-golden-set)).
-- Replace the illustrative header-order/JA4/H2 tables with captured values
+- Build the form ([docs/08 §3](08-frontend-ui.md#3-the-form-interaction-surface))
+  and the form-behavior collector
+  ([docs/04 §2.8](04-layer1-browser.md#28-form-behavior-signals-phase-2)) —
+  dynamics only, never contents.
+- `POST /api/analyze {phase:2}` delta re-scores; bounded/gated behavior group;
+  `phaseDelta` in the response.
+- UI updates the banner + checklist in place, highlighting changes.
+- **Accept:** a human filling the form naturally keeps `human` with rising
+  confidence; a scripted sub-100ms zero-variance fill adds behavioral `fail`s;
+  autofill is not penalized; behavior never flips a clean human to `automated`.
+
+## Milestone 6 — Report UI polish
+
+**Goal:** the finished report surface.
+
+- Big green/amber/red banner with probability + confidence; grouped, collapsible
+  checklist with `pass/warn/fail/unavailable` badges; contradictions on top;
+  "copy JSON"; "re-run" ([docs/08](08-frontend-ui.md)).
+- Accessibility (aria-live banner, text+shape+color badges, keyboard form),
+  light/dark, reduced-motion, strict CSP, dependency-free frontend.
+- **Accept:** the full report renders and updates across both phases; passes an
+  a11y check; the page makes zero third-party requests.
+
+## Milestone 7 — HTTP/2 fingerprint + IP/ASN + locale coherence
+
+**Goal:** the remaining transport and network cross-checks.
+
+- H2 preface/frames → Akamai-style fingerprint + pseudo-header order
+  ([docs/06 §3](06-layer3-transport.md#3-http2-fingerprint)); wire
+  `h2_ua_vendor_mismatch`.
+- Socket IP → ASN; static datacenter list + optional provider behind an interface;
+  wire `ip_datacenter` (warn) and `lang_tz_ip_cluster`
+  ([docs/06 §4](06-layer3-transport.md#4-ip-reputation--asn)).
+- Timezone/locale joins (`Intl` tz vs. IP-geo; `Accept-Language` vs.
+  `navigator.languages`).
+- **Accept:** scripting H2 clients are distinguishable from browsers; a
+  datacenter-hosted client with mismatched locale trips `lang_tz_ip_cluster`; a
+  residential real browser does not; a developer on a cloud shell stays `human`
+  with an amber network warning.
+
+## Milestone 8 — Reference data + golden tests + calibration
+
+**Goal:** real reference data, a pinned matrix, a calibrated probability.
+
+- Capture real fixtures for every matrix row
+  ([docs/11 §3](11-testing.md#3-capturing-fixtures-how-to-build-the-golden-set));
+  replace the illustrative reference tables with captured values
   ([docs/09](09-reference-data.md)).
-- Golden report tests assert verdict buckets for all rows.
+- Fit `b0`/scale so the probability separates the labeled classes; pin bands (and
+  P within tolerance) with golden tests.
 - **Accept:** the full matrix ([docs/11 §1](11-testing.md#1-the-validation-matrix))
-  passes its acceptance criteria; golden tests gate CI.
+  passes its acceptance criteria; golden + schema + unit tests gate CI.
 
-## Milestone 8 — Anti-tamper, hardening, polish
+## Milestone 9 — Anti-tamper, hardening, observability
 
-**Goal:** catch the stealth patches and finish the product.
+**Goal:** catch the stealth patches and finish for production.
 
-- Anti-tamper sub-module ([docs/04 §4](04-layer1-browser.md#4-anti-tamper-notes-measuring-the-measurers))
-  — patched-getter/`toString`/descriptor detection, iframe re-read.
-- Rate limiting, body caps, CSP, privacy note, `PRIVACY.md`
+- Anti-tamper sub-module
+  ([docs/04 §4](04-layer1-browser.md#4-anti-tamper-notes-measuring-the-measurers)).
+- Rate limiting, body caps, session binding, `PRIVACY.md` + in-UI privacy note
   ([docs/10](10-privacy-security.md)).
-- Observability: metrics (verdict distribution, probe reachability, nonce
-  hit/miss), alerts.
-- Accessibility pass on the UI; light/dark; reduced-motion.
+- Metrics (band distribution, phase-2 completion rate, session hit/miss, cert
+  renewal) + alerts.
 - **Accept:** stealth-headless-on-CI (matrix row 15) is caught as ≥`suspicious`
-  via a contradiction; privacy note live; probe-down alerting works.
-
-## Milestone 9 — Optional: Topology C single-box + docs
-
-**Goal:** a one-command self-hosted deploy for people who want max fidelity
-without the split.
-
-- `CAPTURE_MODE=c` all-in-one binary: terminates TLS, captures all layers from one
-  connection, no nonce.
-- Deploy guide for VM/VPS with autocert.
-- **Accept:** the all-in-one binary produces a full three-layer report from a
-  single connection.
+  via a contradiction; privacy note live; alerting on a Layer-3 capture collapse
+  (would mean a proxy crept in front of TLS).
 
 ---
 
-## Dependency graph (what blocks what)
+## Dependency graph
 
 ```
-M0 ─▶ M1 ─▶ M2 (shippable Topology A)
-                │
-                ▼
-M3 (edge probe TLS ⭐) ─▶ M4 (correlation) ─▶ M5 (H2 + order) ─▶ M6 (IP/locale)
-                                                                      │
-                                                                      ▼
-                                                        M7 (references + golden)
-                                                                      │
-                                                                      ▼
-                                                        M8 (anti-tamper + hardening)
-                                                                      │
-                                                                      ▼
-                                                        M9 (optional single-box)
+M0 ─▶ M1 (TLS/JA4 ⭐) ─▶ M2 (L2 values+order) ─▶ M3 (L1 passive, phase-1 report)
+                                                     │
+                                                     ▼
+                              M4 (scoring engine: automation probability)
+                                                     │
+                                                     ▼
+                              M5 (form + phase-2 behavior) ─▶ M6 (report UI polish)
+                                                     │
+                                                     ▼
+                              M7 (H2 + IP/ASN + locale) ─▶ M8 (references + golden + calibration)
+                                                     │
+                                                     ▼
+                              M9 (anti-tamper + hardening + observability)
 ```
 
-- **M2 is the first shippable release** — an honest layers-1–2 tool.
-- **M3 is the critical-path risk** — if raw TLS capture doesn't work on your host,
-  you learn it here, before building M4–M8 on top.
-- M7 (real reference data) can begin in parallel once M3–M5 give you a capture
-  mechanism to generate fixtures with.
+- **M1 is the critical-path risk** — prove raw TLS capture on your host first.
+- **M3+M4 is the first shippable release** — a phase-1 automation-probability
+  report across all three layers, before the form even exists.
+- **M5 adds the behavioral phase**; M7 completes the transport/network signals;
+  M8 makes the probability trustworthy with real data and calibration.
 
 ---
 
 ## Definition of done (v1)
 
-1. Deployed in Topology B: app on Cloud Run, probe on a raw-socket host.
-2. Full three-layer report with the coherence engine and contradiction list.
-3. The validation matrix passes its acceptance criteria, pinned by golden tests
-   in CI.
-4. Graceful degradation to Topology A when the probe is unavailable, always
-   honestly labeled.
-5. Privacy note, rate limiting, CSP, and metrics in place.
+1. Single self-hosted server terminating its own TLS, capturing all three layers on
+   the page-navigation connection.
+2. Two-phase flow: an immediate phase-1 automation probability + banner +
+   checklist, refined by phase-2 form behavior.
+3. Calibrated automation-probability headline with a green/amber/red banner and a
+   per-check list; contradictions surfaced separately.
+4. The validation matrix passes its acceptance criteria, pinned by golden tests in
+   CI; the probability is calibrated across the labeled classes.
+5. Privacy note, rate limiting, strict CSP, and metrics in place; field contents
+   never leave the browser.
 6. The stealth-headless case is caught by a **contradiction**, not a single flag —
    the thesis, demonstrated.

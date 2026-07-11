@@ -1,279 +1,170 @@
-# 02 — Deployment Topology (concrete)
+# 02 — Deployment
 
-This document turns the three topologies from [docs/01](01-architecture-and-hosting.md)
-into concrete infrastructure, config, and the correlation protocol that joins the
-main app to the edge probe in Topology B.
+Concrete infrastructure for the chosen design: **a single self-hosted Go server
+that terminates its own TLS and captures all three layers on one connection**,
+serving a two-phase detection flow. The old split-with-edge-probe design is kept
+only as a [serverless fallback appendix](#appendix--serverless-fallback-split-deployment).
 
 ---
 
-## 1. Main app on Cloud Run / Cloud Functions (gen2)
+## 1. The server
 
-### 1.1 Runtime shape
-
-Deploy the Go app as a **Cloud Run service** (recommended) or a **gen2 Cloud
-Function** — gen2 functions *are* Cloud Run under the hood, so the container is
-the same. A single binary serves both the static UI and the API:
+One Go binary does everything:
 
 ```
-GET  /                → index.html
-GET  /app.js, /app.css, /static/*   → static assets (embedded via Go embed.FS)
-POST /api/analyze     → accepts Layer-1 JSON, reads Layer-2 from its own headers, returns report
+GET  /                → serves index.html (the instrumented form) + a bootstrap
+                        island containing the sessionId; captures this connection's
+                        Layer 2 + Layer 3 signals and stores them under sessionId
+GET  /app.js, /app.css, /static/*   → static assets (embed.FS)
+POST /api/analyze     → phase 1 (passive Layer 1) and phase 2 (form behavior);
+                        merges with stored connection signals, returns the report
 GET  /api/health      → liveness
-GET  /api/reference   → (optional) serves the reference fingerprint DB for the UI's "compare" view
+GET  /api/reference   → (optional) reference fingerprint DB for the UI's compare view
 ```
 
-Serving assets from the same origin as `/api/analyze` keeps `Sec-Fetch-Site:
-same-origin` on the analyze POST, which is itself a signal we want to observe.
+Because the page, the assets, and the API are one origin on one server:
 
-### 1.2 Cloud Run configuration
+- the **navigation** to `GET /` is where we capture the client's true header
+  order and `Sec-Fetch-Mode: navigate`;
+- the same TLS handshake yields the ClientHello (JA3/JA4) and, if `h2` is
+  negotiated, the HTTP/2 fingerprint;
+- the socket `RemoteAddr` is the real client IP;
+- no cross-origin fetch, no nonce — a `sessionId` cookie/island ties the phases
+  together.
+
+### 1.1 Connection-signal capture at `GET /`
+
+TLS/H2/header-order are properties of the **connection**, captured during the
+handshake and the first request. We stash them per-connection and join them to
+the HTTP request:
+
+```go
+// One store: sessionId -> connectionSignals (TTL ~10 min).
+// TLS captured in GetConfigForClient; H2 + header order captured by reading
+// frames/raw bytes; all keyed by the connection's remote addr, then bound to
+// the sessionId minted when GET / is served.
+srv := &http.Server{
+    Addr:      ":443",
+    TLSConfig: tlsCfg,                // GetConfigForClient computes JA3/JA4, stores by RemoteAddr
+    ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+        return context.WithValue(ctx, connKey, c.RemoteAddr())
+    },
+    Handler: router,                  // GET / mints sessionId, binds connSignals[remoteAddr] -> session
+}
+log.Fatal(srv.ListenAndServeTLS("", "")) // certs via autocert
+```
+
+> **HTTP-keepalive / H2 multiplexing note.** The phase-1/phase-2 `POST
+> /api/analyze` calls may reuse the same TLS connection as the navigation (so same
+> JA4) or open a new one. Either way we bind Layer 2/3 to the session at the
+> **navigation** (`GET /`), because that's the request with true browser
+> header-order and navigation `Sec-Fetch-*` semantics. The API POSTs are `fetch`
+> requests and carry `Sec-Fetch-Mode: cors`/`same-origin`, which we record
+> separately (a POST that *doesn't* look same-origin is itself a signal — the
+> payload may have been replayed outside the page).
+
+### 1.2 Host configuration
 
 | Setting | Value | Reason |
 |---------|-------|--------|
-| CPU | 1 vCPU | Scoring is cheap; no ML. |
-| Memory | 128–256 MiB | Go binary + reference tables are small. |
-| Concurrency | 80 | Requests are short and I/O-light. |
-| Min instances | 0 (or 1 if cold starts hurt UX) | Serverless-cheap; Go cold start is sub-second. |
-| Ingress | All | Public diagnostic tool. |
-| HTTP/2 | Optional — irrelevant to capture, since the GFE fronts it either way. | |
-| Custom domain | `app.example.com` | Cleaner than the run.app URL; note it still terminates at the GFE. |
+| Host | Compute Engine VM (e2-small) or a VPS with a static IP | Need a raw :443 socket and our own cert. |
+| TLS | `autocert` (Let's Encrypt) in-process | Our process runs the handshake — required for Layer 3. |
+| Process mgmt | `systemd` unit (or a container on the VM) with auto-restart | Single always-on service. |
+| Ports | 443 (HTTPS), 80 (ACME challenge + redirect) | autocert HTTP-01, plus redirect to HTTPS. |
+| Firewall | 80/443 in; deny the rest | Minimal surface. |
+| Scaling | Vertical first; one box handles diagnostic volume. For horizontal, move the session store to Redis and front with an **L4 (TCP passthrough)** LB — never L7, which would re-terminate TLS. | Preserve the socket. |
+| Logs/metrics | Structured logs, anonymized IPs; Prometheus/OpenTelemetry | See [docs/10](10-privacy-security.md). |
 
-### 1.3 `CAPTURE_MODE` env var
+### 1.3 Header hygiene
 
-The one switch that makes a single codebase serve all topologies:
-
-| `CAPTURE_MODE` | Meaning | Layer 3 in report |
-|----------------|---------|-------------------|
-| `a` | Plain function, no probe | `unavailable` (labeled) |
-| `b` | Split; call the edge probe | `captured via probe` |
-| `c` | Self-managed TLS; local capture | `captured locally` |
-
-Also read `EDGE_PROBE_ORIGIN` (e.g. `https://tls.example.com`) and
-`NONCE_STORE_URL` (Firestore/Redis) when `CAPTURE_MODE=b`.
-
-### 1.4 Header hygiene (filter GFE injections)
-
-Before analysis, partition incoming headers into `client` vs `infrastructure`.
-Deny-list (never scored as client signal), non-exhaustive:
-
-```
-X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host, X-Cloud-Trace-Context,
-Forwarded, Via, X-Appengine-*, Function-Execution-Id, X-Serverless-Authorization,
-Traceparent, X-Request-Id (when GFE-set), Alt-Svc
-```
-
-Keep an allow-list of the headers we actually analyze (see
-[docs/05](05-layer2-http.md)) and treat everything else as "other (unscored)" so
-the report can still *show* it without letting it move the score.
+Even self-hosted, filter hop-by-hop and any proxy headers before analysis, and
+keep an allow-list of the headers we actually score (see
+[docs/05](05-layer2-http.md)). If you ever front the box with an L4 proxy that
+adds `PROXY protocol` or a single trusted `X-Forwarded-For`, parse the real client
+IP from that one trusted hop; otherwise use `RemoteAddr`.
 
 ---
 
-## 2. Edge probe host (Topology B)
-
-### 2.1 Purpose
-
-A minimal Go server on a raw socket whose *only* job is to capture, for the
-connection that reaches it:
-
-- the **TLS ClientHello** → JA3 + JA4;
-- the **HTTP/2 SETTINGS / WINDOW_UPDATE / header-table size / pseudo-header
-  order** (if the client negotiated H2 via ALPN);
-- the **raw header order** of the HTTP request;
-- the **real socket IP** (`RemoteAddr`).
-
-It stores `{ nonce → transportReport }` for 60 seconds and exposes the result to
-the main backend.
-
-### 2.2 Hosting requirements (must terminate its own TLS)
-
-- A host with a **static public IP** and **inbound 443** where **your process
-  binds the socket** — Compute Engine VM (e2-micro is plenty), Fly.io, a VPS, or
-  bare metal.
-- **Certificate:** Let's Encrypt via `golang.org/x/crypto/acme/autocert`, or a
-  cert you manage. The point is *your* Go `tls.Config` runs the handshake.
-- **No proxy, CDN, or managed LB in front.** If you put Cloudflare, a Google
-  HTTP(S) LB, or App Engine in front, TLS re-terminates and you're back to
-  fingerprinting the intermediary. (A pure L4/TCP passthrough LB is acceptable
-  because it doesn't terminate TLS, but it's simpler to point DNS straight at the
-  VM.)
-- **DNS:** `tls.example.com` → the probe's static IP (A/AAAA). No proxying.
-
-### 2.3 Probe server sketch (Go)
-
-```go
-// The ClientHello is captured in GetConfigForClient, stashed per-connection,
-// then joined to the HTTP request in ConnContext.
-type connInfo struct {
-    ja3, ja4     string
-    tlsVersion   uint16
-    alpn         []string
-    remoteIP     string
-    h2           *h2Fingerprint // nil if HTTP/1.1
-    headerOrder  []string
-}
-
-func main() {
-    m := &autocert.Manager{ /* Let's Encrypt for tls.example.com */ }
-    store := newConnStore() // keyed by conn remote addr + t0
-
-    tlsCfg := &tls.Config{
-        GetCertificate: m.GetCertificate,
-        NextProtos:     []string{"h2", "http/1.1"},
-        GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
-            // hello has CipherSuites, SupportedCurves, SupportedPoints,
-            // SignatureSchemes, SupportedProtos (ALPN), SupportedVersions, ServerName.
-            // For full extension ORDER (needed by JA4), read raw bytes via utls
-            // or a wrapping net.Listener that tees the ClientHello.
-            store.putHandshake(hello.Conn.RemoteAddr(), computeJA3JA4(hello))
-            return nil, nil
-        },
-    }
-
-    srv := &http.Server{
-        Addr:      ":443",
-        TLSConfig: tlsCfg,
-        ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-            return context.WithValue(ctx, connKey, c.RemoteAddr())
-        },
-        Handler: probeHandler(store),
-    }
-    log.Fatal(srv.ListenAndServeTLS("", "")) // certs come from autocert
-}
-```
-
-> **Capturing extension order for JA4.** `tls.ClientHelloInfo` does not expose the
-> raw extension list in order. Two ways to get it:
-> 1. Wrap the `net.Listener` so you tee the first flight of bytes off the socket
->    before Go's TLS stack consumes them, and parse the ClientHello yourself
->    (extension type list is straightforward TLV parsing).
-> 2. Use `utls`' lower-level parsing to read the ClientHello structure including
->    extension order.
-> JA3 only needs the *values* (which `ClientHelloInfo` gives); JA4 needs the
-> *sorted* extension/cipher lists plus counts and the ALPN — see
-> [docs/06](06-layer3-transport.md#2-ja3--ja4).
-
-### 2.4 HTTP/2 fingerprint capture
-
-If ALPN negotiated `h2`, run the connection through Go's `golang.org/x/net/http2`
-server **with a hook that records the client's SETTINGS frame** before serving.
-The distinctive values:
-
-- `SETTINGS_HEADER_TABLE_SIZE`, `SETTINGS_ENABLE_PUSH`,
-  `SETTINGS_MAX_CONCURRENT_STREAMS`, `SETTINGS_INITIAL_WINDOW_SIZE`,
-  `SETTINGS_MAX_FRAME_SIZE`, `SETTINGS_MAX_HEADER_LIST_SIZE`, in the **order the
-  client sent them**;
-- the initial `WINDOW_UPDATE` increment;
-- the **pseudo-header order** (`:method`, `:authority`, `:scheme`, `:path`) — real
-  browsers have a stable, distinctive order that differs from Go/Python/curl H2
-  clients;
-- the Akamai-style HTTP/2 fingerprint string
-  (`SETTINGS;WINDOW_UPDATE;PRIORITY;PSEUDO_HEADER_ORDER`).
-
-Go's default `http2.Server` hides some of this; you'll likely read frames from a
-raw `h2c`-style loop or patch in a frame observer. Document the exact approach in
-code comments.
-
-### 2.5 CORS on the probe
-
-The browser reaches the probe with a **cross-origin** `fetch`. The probe must
-return permissive CORS **for the diagnostic endpoint only**:
+## 2. The two-phase API flow
 
 ```
-Access-Control-Allow-Origin: https://app.example.com
-Access-Control-Allow-Methods: GET, OPTIONS
-Access-Control-Allow-Headers: (none needed; keep the request simple to avoid preflight)
-Vary: Origin
+1. Browser GET app.example.com/  (navigation)
+     → server captures connSignals (TLS/JA4, H2, header order, IP/ASN),
+       mints sessionId, stores connSignals under it (TTL 10m),
+       serves index.html with <script id="bootstrap">{ "sessionId": "…" }</script>
+       and sets a Secure;HttpOnly;SameSite=Strict cookie with the same id.
+
+2. app.js runs on load:
+     - collects passive Layer 1
+     - POST /api/analyze { reportVersion, sessionId, phase: 1, layer1 }
+     - server merges connSignals + layer1, scores, returns report@phase1
+     - UI renders banner + probability + checklist immediately
+
+3. User interacts with the on-page form; app.js records interaction dynamics.
+   On submit (or after N seconds of interaction):
+     - POST /api/analyze { reportVersion, sessionId, phase: 2, behavior }
+     - server merges behavior into the session's signals, RE-scores,
+       returns report@phase2 (higher confidence)
+     - UI updates banner + probability + checklist in place, marking which
+       checks changed
 ```
 
-Keep the probe request a **simple request** (GET, no custom headers, no
-non-simple content type) so the browser does **not** send a CORS preflight —
-otherwise you fingerprint the `OPTIONS` preflight connection instead of the real
-one, and the preflight may reuse or differ from the GET connection.
+The server keeps the phase-1 result in the session so phase 2 is a delta re-score,
+not a full re-collect. See [docs/03](03-api-contract.md) for the exact schemas.
 
 ---
 
-## 3. Correlation protocol (Topology B)
-
-The main app and the edge probe are two different origins. We stitch their two
-observations of the same client together with a **single-use nonce**.
-
-### 3.1 Nonce lifecycle
+## 3. TLS & DNS
 
 ```
-1. Browser loads app.example.com/. The main backend mints nonce = UUIDv4,
-   embeds it in the page (a <script type="application/json" id="bootstrap"> island),
-   and — in CAPTURE_MODE=b — pre-registers it as "pending" in the nonce store
-   with a 60s TTL.
-2. app.js calls  GET https://tls.example.com/probe?nonce=NONCE  (simple CORS GET).
-3. The probe captures the transport report for that connection and does:
-       store.set("txp:" + nonce, transportReport, ttl=60s)
-   then returns 204 (or the report JSON if we want to show "your JA4" live).
-4. app.js POSTs app.example.com/api/analyze { nonce, layer1, ... }.
-5. The main backend reads txp:NONCE from the store (or calls the probe's
-   GET /result?nonce=NONCE server-to-server with a shared secret), merges it,
-   deletes the nonce, and scores.
+app.example.com  →  A/AAAA to the server's static IP  (autocert / Let's Encrypt)
 ```
 
-### 3.2 Nonce store options
-
-| Store | Fit |
-|-------|-----|
-| **Firestore** (native mode, TTL policy on a field) | Best for pure-GCP, serverless, no server to run. ~1 write + 1 read per session. |
-| **Redis / Memorystore** | Fastest, but adds an always-on component; overkill for MVP. |
-| **Probe-owned in-memory map + server-to-server `/result` call** | Simplest: no external store at all. The main backend calls the probe's `/result?nonce` with a shared bearer token; the probe holds the map in memory with a 60s sweeper. Works because there's one probe instance. Scale the probe horizontally and you'd need a shared store — but one probe is fine for a diagnostic tool. |
-
-**MVP recommendation:** probe-owned in-memory map + authenticated `/result` call.
-Zero extra infrastructure, and the probe is a single small instance anyway.
-
-### 3.3 Same-client verification
-
-The nonce proves the two requests are *related*, but we should also check they're
-the *same client* and record any mismatch (a mismatch is itself interesting):
-
-- Compare the probe connection's `RemoteAddr` IP to the analyze request's
-  `X-Forwarded-For` client IP. Equal → good. Different → the client used a
-  different egress for the two requests (proxy rotation, split tunnel) — **record
-  as a signal, don't fail.**
-- Compare the `User-Agent` seen by the probe to the one seen by the main app.
-  They should be byte-identical for a genuine browser. A difference is a strong
-  tell (different HTTP client for the two requests).
-
-### 3.4 Failure modes (all degrade, none error)
-
-| Failure | Cause | Behavior |
-|---------|-------|----------|
-| Probe fetch blocked | Corporate firewall, adblock, or the client refuses cross-origin | Report renders Layer 3 as `probe unreachable — transport signals unavailable`; score over L1+L2. |
-| Nonce expired | User idled >60s before submitting | `/api/analyze` treats L3 as absent, notes "transport capture timed out". |
-| Nonce not found | Probe never got the request, or store miss | Same as expired. |
-| IP/UA mismatch | Proxy rotation / different client | L3 captured but flagged with a "captured from a different egress" caveat and down-weighted. |
-| Probe down / not deployed | `CAPTURE_MODE=b` but host offline | Backend catches the timeout, logs it, degrades to A-mode scoring for that request. |
-
-The invariant from [docs/01 §6](01-architecture-and-hosting.md): **probe problems
-reduce coverage; they never break the report.**
+- One domain, one origin. HTTPS via in-process autocert; port 80 serves the
+  ACME HTTP-01 challenge and 301-redirects everything else to HTTPS.
+- No CDN, no managed LB with TLS, no Cloudflare orange-cloud — any of those
+  re-terminate TLS and destroy Layer 3.
 
 ---
 
-## 4. DNS, certs, and CORS summary
+## 4. Local development
 
-```
-app.example.com   →  Cloud Run custom domain (managed cert at GFE)   [main app]
-tls.example.com   →  A/AAAA to edge-probe static IP (autocert/LE)    [edge probe, raw TLS]
-```
-
-- Two subdomains → two origins → the probe `fetch` is cross-origin by design;
-  that's what lets us observe a *fresh* connection's transport.
-- Both on HTTPS. The probe's cert is issued to `tls.example.com` and served by the
-  probe's own Go TLS stack (this is the whole point).
-- CORS on the probe restricted to the app origin (§2.5).
+- A single `make dev` runs the server with a locally-trusted cert via `mkcert`
+  on `app.localtest.me`, so TLS termination (and thus Layer 3 capture) works
+  locally exactly as in prod.
+- Drive it with real Chrome and with headless Playwright (Chromium is at
+  `/opt/pw-browsers/chromium`) to see both ends of the score.
+- `Makefile` targets: `make dev`, `make test`, `make build`, `make deploy`
+  (rsync/scp the binary + `systemctl restart`), `make capture` (dump raw
+  fixtures for the reference DB — see [docs/11 §3](11-testing.md#3-capturing-fixtures-how-to-build-the-golden-set)).
 
 ---
 
-## 5. Local development
+## Appendix — Serverless fallback (split deployment)
 
-- `docker-compose` with two services: `app` (Cloud Run image) and `probe`.
-- Use `mkcert` for locally-trusted certs so the probe terminates real TLS on
-  `localhost` / `tls.localtest.me`.
-- A `CAPTURE_MODE=c` "all-in-one" binary is handy for local testing of the full
-  pipeline without running two processes — it terminates TLS locally and captures
-  all layers from one connection.
-- Provide a `Makefile`: `make dev` (compose up), `make probe`, `make test`,
-  `make deploy-app`, `make deploy-probe`.
+Retained only for the case where someone is later *forced* onto a managed
+serverless platform (Cloud Run / Cloud Functions) and still wants Layer 3. It is
+**not** the chosen design.
+
+The problem: a managed platform terminates TLS at the GFE (see
+[docs/01 §2](01-architecture-and-hosting.md#2-why-we-do-not-deploy-on-a-google-cloud-function)),
+so the function can't see Layer 3. The workaround: keep the app on the managed
+platform and add **one small raw-socket "edge probe"** on a separate subdomain
+(`tls.example.com`) that terminates its own TLS. The browser makes an extra
+cross-origin `fetch` to the probe; the probe captures JA3/JA4 + H2 + header order
+of *that* connection and returns them keyed by a single-use, 60-second
+**correlation nonce** the app minted. The app fetches the probe's result
+server-to-server and merges it.
+
+Trade-offs versus self-hosting:
+
+- adds a second host, a nonce store, CORS, and same-client verification (compare
+  probe IP/UA to the app's) — all of which self-hosting eliminates;
+- the transport signals describe a `fetch` connection, not the navigation, so
+  their Layer-2 context differs and must be labeled;
+- if the probe is blocked/unreachable, Layer 3 degrades to unavailable.
+
+If you must build this, the mechanics (nonce lifecycle, store options, CORS,
+failure modes) are straightforward re-additions, but every one of them exists
+*only* to compensate for not owning the socket. The recommendation stands: own
+the socket instead.

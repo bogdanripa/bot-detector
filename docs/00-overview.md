@@ -4,19 +4,31 @@
 
 A single-page diagnostic web app. A visitor loads it in whatever client they
 like (a real browser, a headless browser, a stealth-patched automation stack, or
-a raw HTTP client), and the app returns a structured report of every signal a
-production anti-bot system would evaluate, together with:
+a raw HTTP client), interacts with an on-page form, and the app returns a
+structured report of every signal a production anti-bot system would evaluate,
+together with:
 
-- an **overall verdict** — `likely human browser` / `suspicious` / `likely automated`;
-- a **per-signal breakdown** — each signal's raw value, a verdict badge, and a one-line explanation of why it matters;
-- a **contradiction list** — cross-layer inconsistencies, surfaced separately because they carry the most weight;
-- a **coherence score** — a single 0–100 number expressing how internally consistent the client's self-presentation is.
+- a headline **automation probability** — a single 0–100% estimate that the
+  client is automated, driving a big green/amber/red **PASS / SUSPICIOUS / FAIL**
+  banner;
+- a **checklist** — every individual test with a status badge (`pass`/`warn`/
+  `fail`/`unavailable`), its captured value, and a one-line explanation of why it
+  matters;
+- a **contradiction list** — cross-layer inconsistencies, surfaced separately
+  because they carry the most weight;
+- a **confidence** figure — how much evidence backs the estimate, distinct from
+  the probability itself.
+
+Detection runs in **two phases**: a passive pass on load (server + client) that
+lands the banner immediately, then a client-only **form-behavior** pass that
+refines the estimate based on *how* the visitor filled the form. See
+[docs/01 §4](01-architecture-and-hosting.md#4-the-two-phase-detection-flow).
 
 The differentiator versus existing tools (`bot.sannysoft.com`, `browserleaks.com`,
 `pixelscan`, `creepjs`) is not any single novel check — it is the explicit
-**cross-layer coherence engine** that scores *contradictions between layers*
+**cross-layer scoring engine** that weights *contradictions between layers*
 (the TLS stack says Go, the User-Agent says Chrome) rather than treating each
-flag in isolation.
+flag in isolation, expressed as one calibrated probability.
 
 ## 2. Goals
 
@@ -24,10 +36,13 @@ flag in isolation.
    deployment allows, and clearly label what a given deployment can and cannot see.
 2. **Explanatory** — every signal is documented in-product; a developer should
    learn *why* something is a tell, not just that it fired.
-3. **Coherent** — the headline output is a single consistency score derived from
-   weighted signals and contradictions, not a wall of green/red dots.
-4. **Honest about limits** — never claim a signal we didn't actually capture.
-   "Unavailable on this deployment" is a first-class result, distinct from "ok".
+3. **One clear number** — the headline output is a single automation
+   *probability* (with a pass/fail banner) derived from weighted signals and
+   contradictions, not a wall of green/red dots.
+4. **Honest about limits** — never claim a signal we didn't actually capture. A
+   probe that couldn't run is `unavailable`, a first-class result distinct from a
+   pass, and the tool states the detection ceiling (a perfectly-driven real
+   browser is indistinguishable from a human — and the report says so).
 5. **Low self-noise** — the frontend must be dependency-light so the tool does
    not pollute the very fingerprint it is measuring.
 6. **Reproducible** — the same client hitting the tool twice should get the same
@@ -88,12 +103,13 @@ reasoning*, not in being an oracle.
 
 | Term | Meaning |
 |------|---------|
-| **Layer 1** | Signals observable from frontend JavaScript (`navigator`, WebGL, canvas, behavior). |
+| **Layer 1** | Signals observable from frontend JavaScript (`navigator`, WebGL, canvas, and form behavior). |
 | **Layer 2** | HTTP request metadata (header values, header order, client hints, `Sec-Fetch-*`). |
 | **Layer 3** | Transport-level fingerprints (TLS ClientHello → JA3/JA4, HTTP/2 SETTINGS, IP/ASN). |
 | **JA3 / JA4** | Hash fingerprints of the TLS ClientHello. JA3 is legacy (MD5 of a field string); JA4 is the current, more robust scheme. |
-| **GFE** | Google Front End — the reverse-proxy / TLS-termination tier in front of all Google-hosted HTTP services, including Cloud Functions and Cloud Run. |
+| **Automation probability** | The headline 0–100% metric: the estimated probability the client is automated, from a calibrated logistic over all weighted signals. Drives the PASS/SUSPICIOUS/FAIL banner. |
+| **Confidence** | How much captured evidence backs the probability estimate — separate from the probability. Rises from phase 1 to phase 2. |
+| **Two-phase flow** | Passive detection on load (phase 1) + form-behavior detection after interaction (phase 2). |
+| **Contradiction** | A specific pair (or set) of signals that cannot both be true of a genuine client (e.g. TLS=Go, UA=Chrome) — the highest-weight evidence. |
 | **Client hints** | The `Sec-CH-UA*` header family; a structured, opt-in replacement for parts of the User-Agent string. |
-| **Coherence score** | The headline 0–100 metric expressing internal consistency across all captured signals. |
-| **Contradiction** | A specific pair (or set) of signals that cannot both be true of a genuine client (e.g. TLS=Go, UA=Chrome). |
-| **Edge probe** | A separate, raw-socket host we control that terminates TLS itself, so it *can* capture Layer 3. Needed because a Cloud Function cannot. |
+| **GFE** | Google Front End — the reverse-proxy / TLS-termination tier in front of all Google-hosted HTTP services. Terminating TLS there is exactly why we do *not* deploy on a Cloud Function. |

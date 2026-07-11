@@ -320,85 +320,101 @@ Backend joins (see [docs/07](07-coherence-engine.md)):
 
 ---
 
-## 2.8 Behavioral signals (sampled over ~3s)
+## 2.8 Form-behavior signals (phase 2)
 
-Provide a small interactive test area (a button and a text input) so there's
-something to measure. Buffer events for ~3 seconds, then submit alongside the
-rest of Layer 1.
+This is the app's deliberate interaction surface: **the homepage is an
+instrumented form**, and phase 2 measures *how the visitor fills it in*. It is the
+richest human-vs-scripted signal class the tool has, and it is only observable
+after interaction — hence the second phase (see
+[docs/01 §4](01-architecture-and-hosting.md#4-the-two-phase-detection-flow)).
 
-### What to capture
+The form should be plausible and self-justifying (e.g. a short "request a demo" /
+"contact us" form: name, email, a select, a message box, a submit button) so a
+human has a natural reason to fill it and a script has to engage with real fields.
+
+### What to capture (dynamics only — never field contents)
 
 | Channel | Metrics | Automation tell |
 |---------|---------|-----------------|
-| Mouse | move count, path points, **linearity** (fraction of near-perfectly-straight segments), speed mean/variance, whether clicks land at exact element-center pixels | Perfectly straight teleport-like paths; zero curvature; clicks at exact geometric center; no movement at all |
-| Keyboard | keydown count, inter-keystroke interval mean/stdev, paste events, whether values appear without keystrokes | Zero variance timing; value set with no keystrokes; paste-only fills |
-| Scroll | event count, distance, wheel vs. programmatic | Instant jumps; no scroll at all on a scrollable page |
-| Focus | focus/blur events fired | Never firing on a form-bearing page |
-| Timing | time-to-first-interaction; form-fill-to-submit duration | Sub-100ms fill→submit = scripted; TTFI of 0 |
+| Per-field typing | keydown count, inter-keystroke mean/stdev, backspaces/corrections, paste events, `filledWithoutKeys` (value appeared with no keystrokes) | Zero-variance cadence; value set with no keystrokes; paste-only fills; no corrections at all across a long form |
+| Focus / tab order | the order fields were focused, whether Tab was used, per-field dwell time | Focus order that never matches the visual order; instantaneous field-to-field jumps; programmatic `.focus()` with 0ms dwell |
+| Mouse-to-field | whether each field was entered by a real mouse move vs. programmatic focus; path linearity into the field; clicks at exact element-center | Fields focused with no pointer movement; dead-straight paths; clicks at the exact geometric center |
+| Submit timing | fill→submit latency; latency after the last field; total interaction duration | Sub-100ms fill→submit; submit fired the same tick as the last keystroke |
+| Global | time-to-first-interaction; scroll presence; blur/focus of the window | TTFI ≈ 0; no scroll on an overflowing page; form completed before the page could plausibly be read |
 
 ### Sketch
 
 ```js
-export function startBehaviorCollector(durationMs = 3000) {
-  const mouse = [], keys = [];
-  let clicks = 0, clicksAtCenter = 0, scrollEvents = 0, scrollDist = 0, firstInteraction = null;
+// Attach on load; flush on submit (or after an interaction threshold).
+export function instrumentForm(formEl) {
   const t0 = performance.now();
+  const fields = new Map();          // name -> per-field accumulator
+  const mouse = [];
+  let firstInteraction = null, tabUsed = false, focusOrder = [];
   const mark = () => { if (firstInteraction === null) firstInteraction = performance.now() - t0; };
+  const acc = name => fields.get(name) ?? (fields.set(name, {
+    name, keydowns: 0, interKeys: [], backspaces: 0, pasteEvents: 0,
+    filledWithoutKeys: false, focusAt: null, dwellMs: 0, enteredByMouse: false, lastKeyAt: null,
+  }), fields.get(name));
 
-  const onMove = e => { mark(); mouse.push([e.clientX, e.clientY, performance.now() - t0]); };
-  const onClick = e => {
-    mark(); clicks++;
-    const r = e.target.getBoundingClientRect?.();
-    if (r && Math.abs(e.clientX - (r.left + r.width/2)) < 1 && Math.abs(e.clientY - (r.top + r.height/2)) < 1)
-      clicksAtCenter++;
-  };
-  const onKey = e => { mark(); keys.push(performance.now() - t0); };
-  const onPaste = () => { mark(); keys.paste = (keys.paste||0)+1; };
-  const onScroll = () => { mark(); scrollEvents++; };
+  for (const el of formEl.querySelectorAll('input,textarea,select')) {
+    const f = acc(el.name || el.id);
+    el.addEventListener('focus', () => { mark(); f.focusAt = performance.now();
+      if (!focusOrder.includes(f.name)) focusOrder.push(f.name);
+      // entered-by-mouse if a mousemove landed on this field just before focus
+      f.enteredByMouse = recentMouseOver(el, mouse);
+    });
+    el.addEventListener('blur', () => { if (f.focusAt) f.dwellMs += performance.now() - f.focusAt; });
+    el.addEventListener('keydown', e => { mark(); f.keydowns++;
+      const now = performance.now(); if (f.lastKeyAt) f.interKeys.push(now - f.lastKeyAt); f.lastKeyAt = now;
+      if (e.key === 'Tab') tabUsed = true; if (e.key === 'Backspace') f.backspaces++;
+    });
+    el.addEventListener('paste', () => { mark(); f.pasteEvents++; });
+    // detect value set with no keystrokes (scripted .value = "…")
+    el.addEventListener('input', () => { if (f.keydowns === 0 && el.value.length > 0 && f.pasteEvents === 0) f.filledWithoutKeys = true; });
+  }
+  addEventListener('mousemove', e => { mark(); mouse.push([e.clientX, e.clientY, performance.now() - t0]); }, { passive: true });
 
-  addEventListener('mousemove', onMove, { passive: true });
-  addEventListener('click', onClick, true);
-  addEventListener('keydown', onKey, true);
-  addEventListener('paste', onPaste, true);
-  addEventListener('scroll', onScroll, { passive: true });
-
-  return new Promise(resolve => setTimeout(() => {
-    removeEventListener('mousemove', onMove); /* …remove the rest… */
-    resolve(summarize(mouse, keys, clicks, clicksAtCenter, scrollEvents, scrollDist, firstInteraction, durationMs));
-  }, durationMs));
+  return () => summarizeForm(formEl, fields, mouse, focusOrder, tabUsed, firstInteraction, t0); // call on submit
 }
 ```
 
-`summarize()` computes:
-
-- **Linearity:** for consecutive triples of mouse points, the fraction whose
-  cross-product (deviation from a straight line) is below a small epsilon.
-  Human paths are jittery; scripted `mouse.move(x,y)` is dead straight.
-- **Inter-key stdev:** humans have high variance; scripted typing with a fixed
-  delay has near-zero variance.
-- **Interacted flag:** whether any of mouse/key/scroll fired at all.
+`summarizeForm()` computes the phase-2 payload in
+[docs/03 §4](03-api-contract.md#4-post-apianalyze--phase-2-form-behavior-after-interaction):
+per-field cadence mean/stdev, `straightSegmentsRatio` of the mouse path (fraction
+of near-collinear point triples — human paths jitter, scripted `mouse.move(x,y)`
+is dead straight), focus/tab order vs. visual order, and the submit-timing
+figures. **Only counts, timings, and variances leave the browser — never the text
+the user typed.**
 
 ### Weighting caution
 
-Behavior is **noisy and easily absent for legitimate reasons** (a user who reads
-without moving the mouse, a keyboard-only user, someone who submits fast). So:
+Behavior is **noisy and legitimately absent sometimes** (fast typists, keyboard-
+only users, password managers that autofill). So:
 
-- Behavioral signals are **bounded** — the entire behavior group can contribute
-  at most a moderate penalty; it can *reinforce* an automation verdict but must
-  not *create* one on its own.
-- "No interaction at all within 3s" is treated as `inconclusive`, not
-  `automation` — many humans just look at the page.
-- The strongest behavioral tell (perfectly linear mouse paths + zero-variance
-  keystrokes) is weighted higher because it's hard to produce accidentally.
+- The whole behavior group is **bounded** — it can *reinforce* an automated
+  verdict but must not *create* one alone (see the cap in
+  [docs/07 §2.6](07-coherence-engine.md#26-form-behavior-layer-1-phase-2-bounded)).
+- **Autofill is not automation.** A password manager or browser autofill produces
+  `filledWithoutKeys` / paste-like patterns; treat a single such field as neutral,
+  and only weight the pattern when it spans the *whole* form with zero mouse and
+  zero corrections.
+- "No interaction at all" is `inconclusive`, not a fail — the phase-1 report
+  already stands; phase 2 simply doesn't get to add behavioral confidence.
+- The strongest tells (all fields filled sub-100ms, zero-variance cadence,
+  programmatic focus with no pointer movement, submit on the same tick as the last
+  key) are weighted higher because they're hard to produce accidentally.
 
 ---
 
-## 3. Collector orchestration
+## 3. Collector orchestration (two phases)
 
 ```js
-// app.js — runs on load
-async function run() {
-  const behaviorP = startBehaviorCollector(3000);          // start the 3s sampler immediately
+// app.js
+async function main() {
+  const { sessionId } = JSON.parse(document.getElementById('bootstrap').textContent);
+
+  // ---- PHASE 1: passive, on load ----
   const layer1 = {
     automationFlags: collectAutomationFlags(),
     headless: await collectHeadless(),
@@ -410,16 +426,24 @@ async function run() {
     locale: collectLocale(),
     environment: collectEnvironment(),
   };
-  if (CAPTURE_MODE === 'b') fireEdgeProbe(NONCE);           // parallel cross-origin fetch
-  layer1.behavior = await behaviorP;                        // resolves at ~3s
-  const report = await postJSON('/api/analyze', { reportVersion:'1', nonce: NONCE, layer1 });
-  render(report);
+  const report1 = await postJSON('/api/analyze', { reportVersion:'1', sessionId, phase:1, layer1 });
+  render(report1);                       // green/red banner + checklist appear immediately
+
+  // ---- PHASE 2: form behavior, after interaction ----
+  const flush = instrumentForm(document.getElementById('probe-form'));
+  document.getElementById('probe-form').addEventListener('submit', async (e) => {
+    e.preventDefault();                  // we don't actually submit user data anywhere
+    const behavior = flush();
+    const report2 = await postJSON('/api/analyze', { reportVersion:'1', sessionId, phase:2, behavior });
+    render(report2);                     // banner + checklist update in place, highlighting phaseDelta
+  });
 }
 ```
 
-All non-behavioral collectors run synchronously/immediately; the behavioral
-collector runs concurrently for 3s; the edge-probe fetch (Topology B) fires in
-parallel so its transport report is ready by the time `/api/analyze` is called.
+Phase 1 renders the verdict before the user touches anything (the strongest tells
+need no interaction). Phase 2 fires on form submit, refining the probability and
+raising confidence. The server captured Layer 2/3 at the `GET /` navigation, so
+both phases just join to the stored session.
 
 ---
 

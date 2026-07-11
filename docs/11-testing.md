@@ -8,8 +8,10 @@ that pin known cases so weight-tuning can't silently break them.
 
 ## 1. The validation matrix
 
-Run each client against a deployed instance (ideally Topology B so all layers are
-live) and record the verdict. The expected column is the acceptance criterion.
+Run each client against a deployed instance of the self-hosted server (all layers
+are live) and record the verdict. The expected column is the acceptance criterion.
+The `likely_human`/`likely_automated` labels below map to the `human`/`automated`
+bands in [docs/07 §4.1](07-coherence-engine.md#41-from-probability-to-band).
 
 | # | Client | Expected verdict | Which signals should fire |
 |---|--------|------------------|---------------------------|
@@ -34,20 +36,26 @@ live) and record the verdict. The expected column is the acceptance criterion.
 | 19 | Real browser via CDP, no stealth | `suspicious` | subtle automation globals, behavior |
 | 20 | Hardened privacy browser (Tor/Brave resistFingerprinting) | `suspicious` (expected FP) | canvas blocked, spoofed values — **documented as an accepted false positive** |
 
-**Coverage rows** — run a subset on **Topology A** (plain Cloud Function) and
-assert the report correctly labels Layer 3 `unavailable`, excludes it from
-scoring, and reduces confidence. Case 7 (`curl` + Chrome UA) must **still** fail
-on Topology A (via Layer-2 values), proving graceful degradation still catches the
-obvious cases.
+**Phase rows** — for a subset, assert the **two-phase** behavior: the phase-1
+report lands the right band from passive signals, and phase 2 either raises
+confidence (real human filling the form naturally) or adds a behavioral `fail`
+(scripted form fill). Assert that a clean phase-1 human is *not* flipped to
+`automated` by behavior alone (the bounded/gated behavior group,
+[docs/07 §2.6](07-coherence-engine.md#26-form-behavior-layer-1-phase-2-bounded)),
+and that autofill/password-manager fills are not penalized.
 
-### Acceptance criteria
+### Acceptance criteria (bands map to the probability, [docs/07 §4.1](07-coherence-engine.md#41-from-probability-to-band))
 
-- Rows 1–5: `likely_human`, no `automation`-severity signal fires.
-- Rows 6–14, 17: `likely_automated`.
+- Rows 1–5: `human` (probability < 0.30), no `fail`-status check fires.
+- Rows 6–14, 17: `automated` (probability > 0.70).
 - Rows 15, 18, 19: at least `suspicious` (the "hard but catchable" band).
-- Row 16: `likely_human` — and the report explicitly states the detection limit.
+- Row 16: `human` — and the report explicitly states the detection limit.
 - Row 20: `suspicious`, and the report notes it's a likely false positive from
   fingerprint hardening (this is a *feature* for that user).
+- **Calibration:** across the whole matrix, the automation probability separates
+  the labeled human/automated classes cleanly (humans cluster low, bots high),
+  verified as part of the calibration procedure
+  ([docs/07 §7](07-coherence-engine.md#7-implementation-notes)).
 
 ---
 
@@ -76,12 +84,13 @@ obvious cases.
 
 ### 2.3 Integration / e2e
 
-- Spin up the app + probe locally (docker-compose, `CAPTURE_MODE=c` all-in-one for
-  simplicity, or both processes for true B-mode), drive real Chrome and headless
-  Playwright against it with Playwright, and assert the rendered verdict.
-- Test the **degradation paths**: kill the probe → assert the report renders on
-  L1–2 with the "probe unreachable" label; expire the nonce → assert the timeout
-  label.
+- Run the self-hosted server locally with a `mkcert` cert (`make dev`), drive real
+  Chrome and headless Playwright against it with Playwright, and assert the
+  rendered verdict for both phases.
+- Test the **two-phase and degradation paths**: assert phase 1 renders before any
+  interaction; assert phase 2 updates the banner after a form fill; expire the
+  session → assert the `session_expired` handling; disable WebGL → assert that
+  check renders `unavailable` without breaking the score.
 
 ### 2.4 Contract tests
 
@@ -95,10 +104,10 @@ obvious cases.
 
 The reference data and golden fixtures both need **real captures**:
 
-1. Deploy a scratch instance in Topology C (single self-managed host) so one
-   connection yields all three layers.
-2. Add a `?capture=1` debug mode that dumps the full raw report (all layers,
-   including raw ClientHello bytes and H2 frames) to a file.
+1. Deploy a scratch instance of the self-hosted server (or run it locally with
+   `mkcert`) so one connection yields all three layers.
+2. Add a `?capture=1` debug mode (`make capture`) that dumps the full raw report
+   (all layers, including raw ClientHello bytes and H2 frames) to a file.
 3. Drive each matrix client at it once, save the dumps as fixtures.
 4. Derive the reference tables ([docs/09](09-reference-data.md)) from the
    browser/library captures; derive golden verdicts from all of them.
@@ -135,13 +144,14 @@ jobs:
 
 The tool is working when:
 
-1. Every real browser (rows 1–5) scores `likely_human` with **no false
-   `automation` signal**, including Firefox/Safari which legitimately lack client
-   hints (a common source of naive false positives — explicitly guarded).
-2. Every obvious automation (rows 6–14, 17) scores `likely_automated`.
+1. Every real browser (rows 1–5) scores `human` with **no false `fail`**,
+   including Firefox/Safari which legitimately lack client hints (a common source
+   of naive false positives — explicitly guarded).
+2. Every obvious automation (rows 6–14, 17) scores `automated`.
 3. The **stealth headless on CI** case (15) is caught as at least `suspicious`
    **by a contradiction**, not by any single flag it patched — this is the whole
    thesis of the tool and the most important test.
-4. The **degraded (Topology A)** runs correctly label missing layers and still
-   catch the obvious cases, never fabricating a Layer-3 verdict.
-5. The honest-limit case (16) is reported as clean *with the stated caveat*.
+4. The **two-phase flow** works: phase 1 lands the band immediately, phase 2
+   refines it, and behavior alone never flips a clean human to `automated`.
+5. The honest-limit case (16) is reported as clean *with the stated caveat*, and
+   the headline automation probability is well-calibrated across the matrix.

@@ -3,21 +3,20 @@
 Signals derived from the HTTP request itself: header **values**, header **order**,
 client hints, `Sec-Fetch-*`, and their consistency with the User-Agent.
 
-> **Deployment reality (read first).** On a **plain Cloud Function (Topology A)**,
-> the Google Front End normalizes the request before your handler runs. Header
-> **values survive**, but header **order does not** — it reflects Google's proxy,
-> not the client. So on Topology A, the order-based checks in [§3](#3-header-order)
-> are marked `unavailable / normalized` and excluded from scoring. To capture true
-> order you need the **edge probe** (Topology B) or a **self-managed TLS host**
-> (Topology C). See [docs/01](01-architecture-and-hosting.md). Everything in
-> [§1–2](#1-header-values) works on all topologies.
+> **We capture this on the page navigation.** Because we self-host and terminate
+> our own TLS ([docs/01 §3](01-architecture-and-hosting.md#3-what-we-deploy-instead-a-single-self-hosted-tls-terminating-server)),
+> both header **values and true order** are available — captured at `GET /` (the
+> real navigation, `Sec-Fetch-Mode: navigate`) and joined to the session. This is
+> exactly the signal a managed serverless front end would have destroyed, which is
+> why we don't deploy on one. Everything in this doc works on the self-hosted
+> server.
 
 ---
 
 ## 1. Header values
 
-Parse and evaluate these, after filtering GFE-injected infrastructure headers
-(see [docs/02 §1.4](02-deployment-topology.md#14-header-hygiene-filter-gfe-injections)).
+Parse and evaluate these, after filtering any hop-by-hop / proxy headers
+(see [docs/02 §1.3](02-deployment-topology.md#13-header-hygiene)).
 
 | Header | Expectation for a real browser | Verdict when violated |
 |--------|--------------------------------|-----------------------|
@@ -105,25 +104,27 @@ HTTP libraries wearing a browser UA.
 - **Go's `http.Header` is a `map[string][]string`** — iteration order is
   randomized and the original order is lost. `httputil.DumpRequest` also does not
   faithfully reproduce the client's wire order.
-- **Behind the GFE (Topology A), the order you see is Google's, not the
-  client's.** HTTP/2 HPACK + the proxy's re-serialization destroy it.
+- **Any TLS-terminating proxy in front destroys it** — HTTP/2 HPACK + the proxy's
+  re-serialization normalize the order. This is why we self-host and read the raw
+  bytes ourselves rather than deploying behind a managed front end.
 
 ### 3.2 How to capture it for real
 
-You must read the **raw request bytes** on a connection **you terminate**:
+Because we terminate TLS ourselves, we read the **raw request bytes** of the
+`GET /` navigation directly:
 
-1. **Edge probe / self-managed host (Topology B/C):** wrap the `net.Listener` (or
-   hijack the connection) and read the raw HTTP/1.1 request-line + header block
-   before handing off, or — for HTTP/2 — read the HEADERS frame and record the
-   field sequence as HPACK-decoded (the *decoded* order is the client's emission
-   order). Store the ordered list of header **names** (lower-cased), excluding
-   pseudo-headers, which are handled in the H2 fingerprint.
-2. Normalize to lower-case names, drop hop-by-hop and infra headers, and compare
-   the resulting sequence to the reference orderings in
+1. Wrap the `net.Listener` (or hijack the connection) and read the raw HTTP/1.1
+   request-line + header block before handing off, or — for HTTP/2 — read the
+   HEADERS frame and record the field sequence as HPACK-decoded (the *decoded*
+   order is the client's emission order). Store the ordered list of header
+   **names** (lower-cased), excluding pseudo-headers, which are handled in the H2
+   fingerprint.
+2. Normalize to lower-case names, drop hop-by-hop headers, and compare the
+   resulting sequence to the reference orderings in
    [docs/09](09-reference-data.md).
 
 ```go
-// On the edge probe (HTTP/1.1 path): tee the header block off the raw conn.
+// HTTP/1.1 path: tee the header block off the raw conn at the navigation.
 func captureHeaderOrder(raw []byte) []string {
     lines := strings.Split(string(raw), "\r\n")
     var order []string
@@ -148,25 +149,21 @@ func captureHeaderOrder(raw []byte) []string {
   Chrome UA) → `suspicious`.
 - Exact match to the claimed browser → `ok`.
 
-### 3.4 On Topology A, be honest
+### 3.4 A note on why we self-host
 
-When `CAPTURE_MODE=a`, emit the signal as:
-
-```json
-{ "id": "header_order", "layer": 2, "verdict": "unavailable",
-  "note": "Header order is normalized by the managed front end (GFE) and cannot be trusted on this deployment. Deploy the edge probe (Topology B) to capture it." }
-```
-
-and **exclude it from the score**. Do not fabricate an order verdict from the
-GFE-normalized headers — that would fingerprint Google, not the client.
+Header order is the signal a managed serverless front end would have normalized
+away (HPACK → proxy re-serialization). We capture it faithfully **only because our
+own process terminates TLS and reads the navigation's raw header block**. This is
+one of the two signals (with TLS/JA4) that drove the decision not to deploy on a
+Cloud Function — see [docs/01 §2](01-architecture-and-hosting.md#2-why-we-do-not-deploy-on-a-google-cloud-function).
 
 ---
 
 ## 4. Cookies & sessions
 
-- Whether the client returns cookies it was set (a stateless HTTP client often
-  won't) — mild signal, and only meaningful if the tool sets a probe cookie on the
-  first response and checks it on the analyze POST.
+- Whether the client returns the `sessionId` cookie set at `GET /` (a stateless
+  HTTP client often won't send it back on the analyze POST) — a mild signal, and a
+  natural by-product of the session mechanism we already have.
 - `Sec-Fetch-Site: same-origin` on the analyze POST confirms the fetch came from
   our own page, not a replayed/curled request. A `same-origin` analyze POST with a
   *cross-site* or absent `Sec-Fetch-Site` suggests the payload was replayed
@@ -183,9 +180,9 @@ report's `raw` echo:
 "layer2": {
   "headerValues": { "user-agent": "…", "accept": "…", "accept-language": "…", "sec-ch-ua": "…", "sec-fetch-mode": "navigate", … },
   "clientHints": { "brands": ["Chromium","Google Chrome","Not-A.Brand"], "platform": "Windows", "mobile": false },
-  "headerOrder": ["host","connection","sec-ch-ua","sec-ch-ua-mobile","user-agent", …],   // or null on Topology A
-  "headerOrderSource": "edge-probe",   // "edge-probe" | "local" | "unavailable"
-  "infrastructureHeaders": ["x-forwarded-for","via","x-cloud-trace-context"]              // shown, not scored
+  "headerOrder": ["host","connection","sec-ch-ua","sec-ch-ua-mobile","user-agent", …],
+  "headerOrderSource": "navigation",   // captured at GET / on the self-hosted server
+  "infrastructureHeaders": []                                                             // shown, not scored (empty when no proxy fronts us)
 }
 ```
 

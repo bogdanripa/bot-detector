@@ -1,63 +1,76 @@
 # Bot / Automation Detection Web App
 
-A diagnostic web app that inspects the visiting client and reports every signal
-a real anti-bot system would use to suspect automation. Think
+A diagnostic web app that inspects the visiting client and reports the
+**probability that the visitor is automated**. Think
 [`bot.sannysoft.com`](https://bot.sannysoft.com) +
-[`browserleaks.com`](https://browserleaks.com), reorganized as a single coherent
-report with a cross-layer **coherence / consistency score**.
+[`browserleaks.com`](https://browserleaks.com), reorganized as a single report
+with one headline number — an **automation-probability score** — a big
+green/red pass-or-fail banner, and a checklist of every individual test.
 
 > **Purpose & scope.** This is a *diagnostic / testing* tool. It runs entirely on
-> the visitor's own request, shows them what their own browser leaks, and helps
+> the visitor's own request, shows them what their own client leaks, and helps
 > developers verify that legitimate automation (or a hardened browser) behaves
 > consistently. It does **not** solve CAPTCHAs, bypass protections, evade
 > detection, or attack third parties. Every signal it computes is about the
 > caller inspecting themselves.
 
-## Documentation
+## The two decisions that shape everything
 
-The full build plan lives in [`docs/`](docs/). Read it in order:
+1. **We self-host on a server that terminates its own TLS.** Not a Google Cloud
+   Function, not any managed serverless platform — those sit behind the Google
+   Front End, which terminates TLS and normalizes HTTP before our code runs, so
+   the ClientHello (JA3/JA4), the HTTP/2 fingerprint, and the real header order
+   are gone. Owning the socket means we capture **all three detection layers from
+   a single connection**, with no edge probe and no correlation nonce. See
+   [docs/01](docs/01-architecture-and-hosting.md).
+
+2. **The headline is an automation probability (0–100%), not a pass/fail flag.**
+   Weighted evidence from every layer is run through a calibrated logistic so the
+   output reads as "≈93% likely automated," bucketed into a green/amber/red
+   banner. See [docs/07](docs/07-coherence-engine.md).
+
+## How a visit works (two-phase detection)
+
+```
+GET /  (page load, real navigation)
+   │  server captures Layer 2 (headers, order) + Layer 3 (TLS/JA4, HTTP2, IP/ASN)
+   │  for THIS connection, keyed to a session
+   ▼
+Phase 1 — on load:  client collects passive Layer-1 signals (navigator, WebGL,
+   canvas, screen, fonts…) and POSTs them. Server merges with the connection
+   signals and returns an INITIAL automation probability + full checklist.
+   The page renders the green/red banner immediately.
+   ▼
+Phase 2 — after the user fills in the on-page form:  the client streams
+   behavioral dynamics (typing cadence, mouse path to fields, focus order,
+   paste, corrections, submit timing) and POSTs them. The server refines the
+   probability and the banner/checklist update live.
+```
+
+The homepage is **a real, instrumented form** — that's the deliberate interaction
+surface that lets us watch *how* the visitor operates the app, which is a rich
+extra source of human-vs-scripted signal. We record interaction *dynamics*, never
+the field *contents*.
+
+## Documentation
 
 | # | Document | What it covers |
 |---|----------|----------------|
 | 00 | [Overview & scope](docs/00-overview.md) | Goals, non-goals, threat model, glossary |
-| 01 | [Architecture & hosting](docs/01-architecture-and-hosting.md) | The three layers, **why Google Cloud Functions changes everything**, recommended deployment topologies |
-| 02 | [Deployment topology](docs/02-deployment-topology.md) | Cloud Run / GCF config, the separate "edge probe" host, DNS, CORS, correlation protocol |
-| 03 | [API contract](docs/03-api-contract.md) | Endpoints, request/response JSON schemas, versioning |
-| 04 | [Layer 1 — browser environment](docs/04-layer1-browser.md) | Every frontend collector, with code sketches, thresholds, verdict logic |
-| 05 | [Layer 2 — HTTP](docs/05-layer2-http.md) | Header values, client hints, `Sec-Fetch-*`, header order (and its GCF caveats) |
-| 06 | [Layer 3 — transport](docs/06-layer3-transport.md) | TLS JA3/JA4, HTTP/2 fingerprint, IP/ASN — captured on the edge probe |
-| 07 | [Coherence engine](docs/07-coherence-engine.md) | The scoring model, weights, contradiction rules, worked examples |
-| 08 | [Frontend / report UI](docs/08-frontend-ui.md) | Page structure, rendering, "copy JSON", accessibility |
-| 09 | [Reference fingerprints](docs/09-reference-data.md) | Known-good header orders, JA3/JA4, H2 settings, datacenter ASNs |
+| 01 | [Architecture & hosting](docs/01-architecture-and-hosting.md) | The three layers, why we self-host (and why *not* a Cloud Function), the two-phase flow |
+| 02 | [Deployment](docs/02-deployment-topology.md) | The single self-hosted server, TLS/autocert, session capture, two-phase endpoints, serverless fallback |
+| 03 | [API contract](docs/03-api-contract.md) | Endpoints, phase-1/phase-2 request & response JSON schemas, versioning |
+| 04 | [Layer 1 — browser environment](docs/04-layer1-browser.md) | Every frontend collector + the form-behavior collector, with code sketches and thresholds |
+| 05 | [Layer 2 — HTTP](docs/05-layer2-http.md) | Header values, client hints, `Sec-Fetch-*`, header order |
+| 06 | [Layer 3 — transport](docs/06-layer3-transport.md) | TLS JA3/JA4, HTTP/2 fingerprint, IP/ASN & datacenter detection |
+| 07 | [Scoring engine](docs/07-coherence-engine.md) | The automation-probability model, weights, contradiction rules, calibration, worked examples |
+| 08 | [Frontend / report UI](docs/08-frontend-ui.md) | The form, the pass/fail banner, the live-updating checklist, "copy JSON" |
+| 09 | [Reference fingerprints](docs/09-reference-data.md) | Known header orders, JA3/JA4, H2 settings, datacenter ASNs |
 | 10 | [Privacy, security & abuse](docs/10-privacy-security.md) | Data handling, rate limiting, legal posture |
 | 11 | [Testing & CI](docs/11-testing.md) | The validation matrix, automated harness, CI |
 | 12 | [Roadmap & milestones](docs/12-roadmap.md) | Ordered build steps with acceptance criteria |
 
-## TL;DR of the most important decision
-
-Detection has three layers. A JS-only app cannot see layers 2–3 correctly, so a
-backend is required — **but a plain Google Cloud Function cannot see layer 3 at
-all**, and sees layer 2 only partially. The Google Front End (GFE) terminates
-TLS and normalizes HTTP before your code runs, so the ClientHello, the HTTP/2
-fingerprint, and the original header order are gone by the time your function
-executes.
-
-The recommended architecture is therefore a **split deployment**:
-
-```
-                            ┌──────────────────────────────────────┐
-   Browser  ───────────────▶│  App  (Cloud Run / GCF gen2)         │  Layer 1 + Layer 2 (values) + UI + scoring
-      │                     │  app.example.com                     │
-      │                     └──────────────────────────────────────┘
-      │
-      │  cross-origin fetch  ┌──────────────────────────────────────┐
-      └────────────────────▶ │  Edge probe (raw-socket host)        │  Layer 2 (order) + Layer 3 (TLS/H2/IP)
-                             │  tls.example.com  — YOU terminate TLS │
-                             └──────────────────────────────────────┘
-```
-
-The two responses are correlated by a nonce and merged by the coherence engine.
-If you deploy **only** the Cloud Function, the app still works — it just labels
-the transport signals as "unavailable on this deployment" and scores on layers
-1–2. See [docs/01](docs/01-architecture-and-hosting.md) for the full reasoning
-and fallbacks.
+Deployment target is now the single self-hosted server ("Topology C" in the
+architecture doc). The split app-plus-edge-probe design is retained only as a
+[serverless fallback appendix](docs/02-deployment-topology.md#appendix--serverless-fallback-split-deployment)
+for anyone later forced onto a managed platform.
