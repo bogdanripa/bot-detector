@@ -27,7 +27,9 @@
 </head>
 <body>
   <h1>Your automation report</h1>
-  <div id="bd-report">Compiling report…</div>
+  <!-- Server-rendered report (debug); client JS re-renders in place with the
+       same data, so the page still works with JS disabled. -->
+  <div id="bd-report">__BD_CHECKS__</div>
   <a class="again" href="/">↺ Run it again</a>
   <script src="/botdetect.js" defer></script>
 </body>

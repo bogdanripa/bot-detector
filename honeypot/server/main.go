@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -12,7 +13,9 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"html/template"
 	"log"
+	"math"
 	"math/big"
 	"net"
 	"net/http"
@@ -296,7 +299,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	servePage(w, "index.html", map[string]any{})
+	servePage(w, "index.html", map[string]any{}, "")
 }
 
 func handleForbidden(w http.ResponseWriter, r *http.Request) {
@@ -328,11 +331,21 @@ func funnelHandler(mode, step string) http.HandlerFunc {
 			boot["funnelToken"] = s.Token
 		}
 
+		// DEBUG MODE — every page carries the cumulative report, rendered
+		// server-side. On the first hit it holds server-only checks; it grows
+		// as the client posts Layer 1 / provenance / behavior between pages.
+		checksHTML := ""
+		if mode == "debug" {
+			report := eng.Score(s.signalSet())
+			report.Step = step
+			checksHTML = renderChecksHTML(report)
+		}
+
 		switch step {
 		case "landing":
-			servePage(w, "landing.html", boot)
+			servePage(w, "landing.html", boot, checksHTML)
 		case "form":
-			servePage(w, "form.html", boot)
+			servePage(w, "form.html", boot, checksHTML)
 		case "result":
 			report := eng.Score(s.signalSet())
 			report.Step = "result"
@@ -344,9 +357,9 @@ func funnelHandler(mode, step string) http.HandlerFunc {
 					serveForbidden(w, http.StatusForbidden, "final-verdict")
 					return
 				}
-				servePage(w, "test-result.html", boot)
+				servePage(w, "test-result.html", boot, "")
 			} else {
-				servePage(w, "result.html", boot)
+				servePage(w, "result.html", boot, checksHTML)
 			}
 		}
 	}
@@ -432,12 +445,103 @@ func handleClientJS(w http.ResponseWriter, r *http.Request) {
 	w.Write(b)
 }
 
+// ---- server-rendered debug panel ----
+// In debug mode every funnel page carries a "report so far" panel rendered
+// server-side: /debug shows the server-only checks (headers, TLS, IP) and the
+// list grows as the client JS posts Layer 1 / scroll / click / form behavior.
+
+type checksView struct {
+	Percent, ConfidencePct int
+	Band, AutomationType   string
+	BandColor, Icon        string
+	Contradictions         []schema.Finding
+	Captured, Pending      []string
+}
+
+var checksTmpl = template.Must(template.New("checks").Parse(`
+<section style="margin:2rem 0;border:2px solid #8884;border-radius:12px;padding:1rem 1.2rem">
+  <h2 style="font-size:1.1rem;margin:.2rem 0 .8rem">Live report — checks so far</h2>
+  <div style="display:flex;align-items:center;gap:1rem;border:3px solid {{.BandColor}};border-radius:10px;padding:.6rem 1rem;margin-bottom:.8rem">
+    <div style="font-size:2.2rem;font-weight:800;color:{{.BandColor}}">{{.Percent}}%</div>
+    <div>
+      <div style="font-size:1.1rem;font-weight:700;color:{{.BandColor}}">{{.Icon}} {{.Band}}</div>
+      <div style="color:#777;font-size:.85rem">automation probability {{.Percent}}% &middot; confidence {{.ConfidencePct}}%{{if ne .AutomationType "none"}} &middot; type: <code>{{.AutomationType}}</code>{{end}}</div>
+    </div>
+  </div>
+  {{if .Contradictions}}<ul style="padding-left:1.1rem;margin:.4rem 0">
+  {{range .Contradictions}}<li style="margin:.25rem 0"><b style="color:#cf222e">{{.Title}}</b> — {{.Explanation}}{{if .Value}} <code style="font-size:.8rem">{{.Value}}</code>{{end}}</li>{{end}}
+  </ul>{{end}}
+  <table style="border-collapse:collapse;width:100%">
+  {{range .Checks}}<tr>
+    <td style="border-top:1px solid #8883;padding:.4rem .3rem;vertical-align:top"><span style="color:#fff;font-size:.7rem;font-weight:700;padding:.12rem .4rem;border-radius:4px;background:{{.Color}}">{{.Badge}}</span></td>
+    <td style="border-top:1px solid #8883;padding:.4rem .3rem;vertical-align:top"><b>{{.Title}}</b><br><span style="color:#888;font-size:.85rem">{{.Explanation}}</span></td>
+    <td style="border-top:1px solid #8883;padding:.4rem .3rem;vertical-align:top;font-family:ui-monospace,monospace;font-size:.78rem;color:#777;word-break:break-all;max-width:14rem">{{.Value}}</td>
+  </tr>{{end}}
+  </table>
+  <p style="color:#888;font-size:.85rem;margin-bottom:0">Captured so far: {{range $i, $c := .Captured}}{{if $i}}, {{end}}<b>{{$c}}</b>{{end}}.
+  {{if .Pending}}Still to come: {{range $i, $c := .Pending}}{{if $i}}, {{end}}{{$c}}{{end}} — continue through the pages and this list grows.{{end}}</p>
+</section>`))
+
+// Badge/Color are derived per finding for the template.
+type findingView struct {
+	schema.Finding
+	Badge, Color string
+}
+
+func renderChecksHTML(report schema.Report) string {
+	bandColor := map[string]string{"human": "#1a7f37", "suspicious": "#bf8700", "automated": "#cf222e"}
+	icon := map[string]string{"human": "✓", "suspicious": "⚠", "automated": "✗"}
+	labels := []struct{ key, label string }{
+		{"layer2", "HTTP headers"}, {"layer3Tls", "TLS fingerprint"}, {"layer3Ip", "IP/ASN"},
+		{"layer1", "browser environment (JS)"}, {"behavior", "behavior (scroll/click/typing)"},
+	}
+	var captured, pending []string
+	for _, l := range labels {
+		if report.Coverage[l.key] == "captured" {
+			captured = append(captured, l.label)
+		} else {
+			pending = append(pending, l.label)
+		}
+	}
+	v := struct {
+		checksView
+		Checks []findingView
+	}{
+		checksView: checksView{
+			Percent:        report.Score.Percent,
+			ConfidencePct:  int(math.Round(report.Score.Confidence * 100)),
+			Band:           strings.ToUpper(report.Score.Band),
+			AutomationType: report.Score.AutomationType,
+			BandColor:      bandColor[report.Score.Band],
+			Icon:           icon[report.Score.Band],
+			Contradictions: report.Contradictions,
+			Captured:       captured,
+			Pending:        pending,
+		},
+	}
+	badge := map[string]string{"pass": "PASS", "warn": "WARN", "fail": "FAIL", "unavailable": "N/A"}
+	col := map[string]string{"pass": "#1a7f37", "warn": "#bf8700", "fail": "#cf222e", "unavailable": "#888"}
+	for _, c := range report.Checks {
+		b, cl := badge[c.Status], col[c.Status]
+		if b == "" {
+			b, cl = c.Status, "#555"
+		}
+		v.Checks = append(v.Checks, findingView{Finding: c, Badge: b, Color: cl})
+	}
+	var buf bytes.Buffer
+	if err := checksTmpl.Execute(&buf, v); err != nil {
+		log.Printf("checks template: %v", err)
+		return ""
+	}
+	return buf.String()
+}
+
 func rawEcho(s *session) map[string]any {
 	return map[string]any{"layer1": s.Layer1, "layer2": s.Layer2, "layer3": s.Layer3,
 		"scrollToLink": s.ScrollToLink, "linkClick": s.LinkClick, "behavior": s.Behavior, "traps": s.Traps}
 }
 
-func servePage(w http.ResponseWriter, name string, boot map[string]any) {
+func servePage(w http.ResponseWriter, name string, boot map[string]any, checksHTML string) {
 	b, err := readWeb(name)
 	if err != nil {
 		http.Error(w, "page not found: "+name, http.StatusInternalServerError)
@@ -445,6 +549,7 @@ func servePage(w http.ResponseWriter, name string, boot map[string]any) {
 	}
 	bj, _ := json.Marshal(boot)
 	html := strings.ReplaceAll(string(b), "__BD_BOOTSTRAP__", string(bj))
+	html = strings.ReplaceAll(html, "__BD_CHECKS__", checksHTML)
 	for _, k := range []string{"next", "submit", "forbidden"} {
 		if v, ok := boot[k].(string); ok {
 			html = strings.ReplaceAll(html, "__"+strings.ToUpper(k)+"__", v)
