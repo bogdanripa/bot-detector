@@ -182,17 +182,27 @@ Resolve the visitor IP → ASN and organization; flag datacenter/cloud ranges.
 - If you deliberately front the box with an L4 proxy, honor `PROXY protocol` or a
   single trusted `X-Forwarded-For` hop; otherwise use `RemoteAddr`.
 
-### 4.2 ASN classification
+### 4.2 ASN classification (residential vs. hosting)
 
-- Ship a **static datacenter-ASN list** for the obvious clouds so the tool works
-  with zero external dependencies: AWS (16509, 14618), GCP (15169, 396982),
-  Azure (8075), OVH (16276), Hetzner (24940), DigitalOcean (14061), Linode/Akamai
-  (63949, 20940), Vultr (20473), Scaleway (12876), Oracle Cloud (31898), plus
-  common VPN/hosting ranges. (Full seed list in [docs/09](09-reference-data.md).)
-- Optionally integrate a reputation source (MaxmMind GeoLite2 ASN, IPinfo,
-  Team Cymru IP-to-ASN via DNS) behind an interface, so the static list is the
-  offline default and a richer source can be swapped in.
-- **Status:** datacenter/cloud/hosting ASN → `warn` (a solid contributor,
+There is no "residential" bit in an IP — you infer it by mapping the IP to the ASN
+that announces it, then classifying that ASN's *type*. **Implementation
+(`go/ipasn`):** a **sorted IP-range interval table searched by binary search** —
+O(log n), allocation-free, **~137 ns/lookup over a 250k-range table**. Blazing
+fast, fully offline.
+
+- **Data, two tiers:**
+  - *Built-in* — a small curated cloud-range list compiled in (zero-config).
+  - *`LoadTSV`* — the **free, public-domain [iptoasn.com](https://iptoasn.com)**
+    table (`ip2asn-v4`/combined) for full coverage of every routed IP. No license.
+    A MaxMind `.mmdb` can be plugged in via the `Provider` interface if you have a
+    license, but iptoasn is equally fast and free.
+- **Classification:** ASN + org → `hosting` (a curated hosting-ASN set + org-name
+  keywords like *amazon/ovh/hetzner/cloud/hosting*), `mobile`, `isp` (residential),
+  or **`unknown`** for unlisted IPs — deliberately *not* assumed residential.
+- **Honest limit — residential proxies:** bot operators route through *real* ISP
+  IPs (Bright Data etc.); those classify as `isp` and are correct by ASN. IP type
+  alone can't catch them — which is exactly why it's a mild contributor.
+- **Status:** `hosting` → `warn` (a solid contributor,
   +0.9 log-odds — see [docs/07 §2.5](07-coherence-engine.md#25-transport-layer-3)),
   not a `fail` on its own. Real users are mostly on residential/mobile ASNs, but
   developers browse from cloud shells and users route through VPNs, so a datacenter

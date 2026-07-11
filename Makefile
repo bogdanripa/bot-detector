@@ -21,5 +21,10 @@ dev:              ## run without a prebuilt binary
 fmt:
 	gofmt -w go honeypot
 
+fetch-ipdata:    ## download the free (public-domain) iptoasn IP→ASN table
+	mkdir -p data
+	curl -sSL -o data/ip2asn-v4.tsv.gz https://iptoasn.com/data/ip2asn-v4.tsv.gz
+	@echo "loaded → run with: BD_IPASN_TSV=data/ip2asn-v4.tsv.gz make run"
+
 clean:
 	rm -rf bin

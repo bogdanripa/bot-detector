@@ -172,6 +172,7 @@ type Layer3 struct {
 	IP           string   `json:"ip"`
 	ASN          int      `json:"asn"`
 	Org          string   `json:"org"`
+	IPType       string   `json:"ipType"` // "hosting" | "isp" | "mobile" | "unknown" | "private"
 	IsDatacenter bool     `json:"isDatacenter"`
 }
 

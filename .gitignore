@@ -21,3 +21,6 @@ node_modules/
 
 # npm artifacts from local browser-driving tests
 package-lock.json
+
+# IP-to-ASN dataset (fetched at deploy; free/public-domain)
+/data/

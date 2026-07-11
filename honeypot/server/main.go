@@ -44,6 +44,16 @@ func main() {
 	eng, err = engine.New(cfg)
 	must(err)
 
+	// Optional: load the free iptoasn table for full IP coverage (BD_IPASN_TSV).
+	if p := os.Getenv("BD_IPASN_TSV"); p != "" {
+		if err := classifier.LoadTSV(p); err != nil {
+			log.Printf("ipasn: could not load %s: %v (using built-in ranges)", p, err)
+		} else {
+			n4, n6 := classifier.Size()
+			log.Printf("ipasn: loaded %d IPv4 + %d IPv6 ranges from %s", n4, n6, p)
+		}
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleLanding)
 	mux.HandleFunc("/step-2", handleForm)
@@ -142,7 +152,7 @@ func captureConn(s *session, r *http.Request, step string) {
 
 	l3 := &schema.Layer3{IP: hostOnly(r.RemoteAddr)}
 	info := classifier.Classify(r.RemoteAddr)
-	l3.IP, l3.ASN, l3.Org, l3.IsDatacenter = info.IP, info.ASN, info.Org, info.IsDatacenter
+	l3.IP, l3.ASN, l3.Org, l3.IPType, l3.IsDatacenter = info.IP, info.ASN, info.Org, info.Type, info.IsDatacenter
 	if t := capt.TLSFor(r.RemoteAddr); t != nil {
 		l3.Available = true
 		l3.TLSVersion, l3.JA3, l3.JA3Hash, l3.JA4 = t.Version, t.JA3, t.JA3Hash, t.JA4

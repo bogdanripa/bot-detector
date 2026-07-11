@@ -21,7 +21,29 @@ itself (required for Layer-3 capture), speaking **HTTP/1.1** so header order is
 reliably captured. Open <https://localhost:8443/> and accept the cert warning.
 
 Config via env: `BD_ADDR` (`:8443`), `BD_WEB_DIR` (`honeypot/web`),
-`BD_CLIENT_JS` (`packages/client/botdetect.js`), `BD_SCORING` (`config/scoring.json`).
+`BD_CLIENT_JS` (`packages/client/botdetect.js`), `BD_SCORING` (`config/scoring.json`),
+`BD_IPASN_TSV` (optional IP→ASN table, see below).
+
+## IP → ASN (residential vs. hosting)
+
+By default the classifier uses a small built-in list of cloud ranges (zero-config).
+For full coverage of every routed IP, load the **free, public-domain**
+[iptoasn.com](https://iptoasn.com) table — it's a sorted in-memory interval table
+searched by binary search, **~137 ns/lookup over 250k ranges** (allocation-free):
+
+```bash
+make fetch-ipdata                                   # downloads data/ip2asn-v4.tsv.gz
+BD_IPASN_TSV=data/ip2asn-v4.tsv.gz make run
+```
+
+Classification: an IP resolves to its ASN + org, then to `hosting` (datacenter/
+cloud), `mobile`, `isp` (residential), or `unknown` (unlisted — *not* assumed
+residential). `hosting` sets `isDatacenter` and contributes the mild `ip_datacenter`
+signal. A MaxMind `.mmdb` can be plugged in via the `Provider` interface if you
+have a license, but the iptoasn table is equally fast and free. Note: **residential
+proxies** (real ISP IPs rented by bot operators) will classify as `isp` and are the
+honest limit of IP-based signals — which is why it's weighted as a contributor, not
+proof.
 
 ## What works
 
