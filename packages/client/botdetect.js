@@ -293,7 +293,9 @@
 
   // ---------- honeypot per-step auto-init ----------
   var FORBIDDEN = BOOT.forbidden || "/test/forbidden";
-  function isBot(report) { return report && report.score && report.score.band === "automated"; }
+  var ENFORCE = BOOT.enforceBand || "suspicious";
+  function bandRank(b) { return b === "automated" ? 2 : b === "suspicious" ? 1 : 0; }
+  function isBot(report) { return report && report.score && bandRank(report.score.band) >= bandRank(ENFORCE); }
   // In test mode, redirect a detected bot; returns true if it redirected.
   function enforce(report) {
     if (BOOT.mode === "test" && isBot(report)) { location.replace(FORBIDDEN); return true; }

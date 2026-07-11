@@ -88,17 +88,25 @@ on a verdict. The root `/` is a chooser.
 | | `/test` — production | `/debug` — diagnostic |
 |---|---|---|
 | Routes | `/test`, `/test/form`, `/test/result`, `/test/submit`, `/test/forbidden` | `/debug`, `/debug/form`, `/debug/result`, `/debug/submit` |
-| Server-side | On **every** navigation, scores a **server-only** SignalSet (Layer 2/3 + funnel — no client JS). If the band is `automated`, returns **HTTP 403** with the "not allowed" page. | Never 403s. |
-| Client-side | On load / on submit, fetches the full verdict; if `automated`, **redirects to `/test/forbidden`**. | Never redirects; the result page **renders the full report** (checks + scores + contradictions + probability). |
-| Result page | A generic "access granted" (no signals revealed) — or a 403 if the final verdict is `automated`. | The full report. |
+| Server-side | On **every** navigation, scores a **server-only** SignalSet (Layer 2/3 + funnel — no client JS). At/above the enforce threshold, returns **HTTP 403** with the "not allowed" page. | Never 403s. |
+| Client-side | On load / on submit, fetches the full verdict; at/above the threshold, **redirects to `/test/forbidden`**. | Never redirects; the result page **renders the full report** (checks + scores + contradictions + probability). |
+| Result page | A generic "access granted" (no signals revealed) — or a 403 if the final verdict crosses the threshold. | The full report. |
 
-The **server-only gate** implements "403 when we're sure": it fires on the strong
-transport/HTTP contradictions available without a browser (TLS-vs-UA mismatch,
-library header order, funnel bypass) — so a raw `curl` is blocked on the first
-request, while a real browser passes the gate and is judged client-side. This is a
-faithful mini-model of a production anti-bot: cheap deterministic blocks up front,
-richer probabilistic judgement once JS runs. `/debug` is the same detection with
-enforcement turned off, for developers to see exactly what fired.
+**Enforce threshold (`BD_ENFORCE_BAND`).** Default **`suspicious`** — *aggressive*:
+block anything not clearly `human` ("better block than not"). Set to `automated` for
+conservative blocking. The threshold is applied identically at all three gates
+(server-only, client redirect, final result).
+
+The **server-only gate** fires on the strong transport/HTTP signals available
+without a browser (TLS-vs-UA mismatch, library header order, funnel bypass) — so a
+raw `curl` is blocked on the first request, while a **real browser passes the server
+gate on first paint** (its server-only signals are clean) and is judged
+client-side. Aggressive mode therefore catches the *suspicious middle* (VMs,
+stealth/odd configs) via the client verdict without false-blocking clean browsers
+before their JS runs. This is a faithful mini-model of a production anti-bot: cheap
+deterministic blocks up front, richer probabilistic judgement once JS runs.
+`/debug` is the same detection with enforcement off, so developers see exactly what
+fired.
 
 ---
 

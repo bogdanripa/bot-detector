@@ -36,7 +36,20 @@ var (
 	clientJS    = envOr("BD_CLIENT_JS", "packages/client/botdetect.js")
 	scoringPath = envOr("BD_SCORING", "config/scoring.json")
 	addr        = envOr("BD_ADDR", ":8443")
+	// enforceBand is the /test blocking threshold. "suspicious" (default) is
+	// aggressive: block anything not clearly human. "automated" is conservative.
+	enforceBand = envOr("BD_ENFORCE_BAND", "suspicious")
 )
+
+func bandRank(b string) int {
+	switch b {
+	case "automated":
+		return 2
+	case "suspicious":
+		return 1
+	}
+	return 0
+}
 
 func main() {
 	cfg, err := os.ReadFile(scoringPath)
@@ -258,7 +271,8 @@ func funnelHandler(mode, step string) http.HandlerFunc {
 		}
 
 		boot := map[string]any{"reportVersion": "1", "sessionId": s.ID, "step": step, "mode": mode,
-			"next": "/" + mode + "/form", "submit": "/" + mode + "/submit", "forbidden": "/test/forbidden"}
+			"enforceBand": enforceBand,
+			"next":        "/" + mode + "/form", "submit": "/" + mode + "/submit", "forbidden": "/test/forbidden"}
 		if step == "landing" {
 			boot["funnelToken"] = s.Token
 		}
@@ -275,7 +289,7 @@ func funnelHandler(mode, step string) http.HandlerFunc {
 			report.Raw = rawEcho(s)
 			boot["report"] = report
 			if mode == "test" {
-				if report.Score.Band == "automated" {
+				if bandRank(report.Score.Band) >= bandRank(enforceBand) {
 					serveForbidden(w, http.StatusForbidden, "final-verdict")
 					return
 				}
@@ -297,7 +311,7 @@ func submitHandler(mode string) http.HandlerFunc {
 // behavior). "Sure it's a bot" = the server-only verdict is automated.
 func serverOnlyBot(s *session) bool {
 	ss := schema.SignalSet{Layer2: s.Layer2, Layer3: s.Layer3, Funnel: s.funnel()}
-	return eng.Score(ss).Score.Band == "automated"
+	return bandRank(eng.Score(ss).Score.Band) >= bandRank(enforceBand)
 }
 
 func serveForbidden(w http.ResponseWriter, status int, reason string) {
