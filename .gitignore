@@ -1,0 +1,17 @@
+# Local Claude Code settings
+.claude/settings.local.json
+
+# Build / dependency artifacts (for the eventual implementation)
+/bin/
+/dist/
+node_modules/
+*.exe
+
+# Local env / secrets
+.env
+.env.local
+*.pem
+*.key
+
+# OS noise
+.DS_Store
