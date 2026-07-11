@@ -170,6 +170,31 @@ that the number races to infinity.
 forces the band to at least `automated` (red) regardless of the arithmetic, so a
 client that's otherwise pristine but has a Go TLS stack can never show green.
 
+### 3.1 The agentic contradiction (on-device AI agents)
+
+The contradictions above are **cross-layer** (TLS ≠ UA) and catch *scripted*
+clients. On-device **agentic browsers** (Comet, Atlas, Claude computer-use,
+Operator, CDP stealth) present a *pristine* environment across all three layers,
+so those rules never fire. They're caught by a different, **intra-client**
+contradiction:
+
+> **`clean_env_agentic_behavior`** (+3.5) — every environment signal says "real
+> browser, real OS, residential IP," **yet** input provenance and/or cadence say
+> "not a human hand" (teleporting/trail-less/exact-center clicks, no
+> hardware-coalesced pointer samples, multi-second bursty action cadence). A real
+> human on a real browser produces human input; a pristine environment with
+> non-human input is an **agent driving that real browser.**
+
+The engine **promotes behavioral/input evidence precisely when environmental
+evidence is clean** (a datacenter IP would otherwise have carried the scripted
+case; the agent has none). The full signal catalog, weights, and the
+`automationType` inference live in **[docs/14](14-agentic-and-cdp-detection.md)**;
+they add new groups (CDP leaks, input provenance, screenshot cadence, expanded
+biometrics, product artifacts, Web Bot Auth) to `config/scoring.json`. The report
+carries an **`automationType`** (`none | scripted | headless | agentic-cdp |
+agentic-os | agentic-ext | agentic-declared`) so the verdict says *which kind* of
+automation it found, not just the probability.
+
 ---
 
 ## 4. Bands, banner & confidence

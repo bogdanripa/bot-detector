@@ -106,16 +106,36 @@ on it.
   datacenter+mismatched-locale client trips `lang_tz_ip_cluster`; a dev on a cloud
   shell stays `human` with an amber warning.
 
-### M9 — reference data, golden tests & calibration
+### M9 — agentic & CDP detection ([docs/14](14-agentic-and-cdp-detection.md))
 
-- Capture real fixtures for every matrix row
+The modern frontier: catching real-browser AI agents (Comet, Atlas, Claude
+computer-use, Operator, CDP stealth) that pass every passive check. Depends on the
+client lib (M1/M5) and engine (M4); can be pulled earlier if agents are the
+priority.
+
+- **`@botdetect/client`:** `cdpLeaks` (Runtime.enable + the rebrowser leak set),
+  `inputProvenance` (teleport / no-coalesced / exact-center clicks), `cadence`
+  (perceive→think→act timing), expanded `biometrics`.
+- **`go/httpcapture`:** Web Bot Auth (RFC 9421) signature parsing/verification +
+  server-side product tells (`Atlas`/`Comet`/`PerplexityBot` UA, `CFNetwork`/`Darwin`).
+- **`engine`:** the `clean_env_agentic_behavior` contradiction, the new signal
+  groups, and `automationType` inference.
+- **Accept:** a CDP-driven agent trips `runtimeEnableLeak`; a computer-use/Operator
+  agent (OS-level input, clean environment) is caught via input provenance +
+  cadence and labeled `agentic-os`; a valid Web-Bot-Auth request is `agentic-declared`;
+  **a human merely reading in Comet/Atlas is not penalized** (the false-positive
+  guard, [docs/14 §11](14-agentic-and-cdp-detection.md#11-testing-additions-agent-matrix)).
+
+### M10 — reference data, golden tests & calibration
+
+- Capture real fixtures for every matrix row (incl. the agentic rows)
   ([docs/11 §3](11-testing.md#3-capturing-fixtures-how-to-build-the-golden-set));
   replace illustrative reference tables ([docs/09](09-reference-data.md)); fit
   `config/scoring.json` so the probability calibrates.
 - **Accept:** the matrix ([docs/11 §1](11-testing.md#1-the-validation-matrix))
   passes; golden + schema + unit tests (per library) gate CI; Go/JS engines agree.
 
-### M10 — anti-tamper, hardening, observability, distribution
+### M11 — anti-tamper, hardening, observability, distribution
 
 - Anti-tamper in `@botdetect/client`
   ([docs/04 §4](04-layer1-browser.md#4-anti-tamper-notes-measuring-the-measurers)).
@@ -142,7 +162,10 @@ Part A (libraries)
   M4 (engine, degradation-aware) ─▶ M5 (client form behavior)
 
 Part B (honeypot, consumes A)
-  M6 (server compose) ─▶ M7 (web + UI) ─▶ M8 (H2 + locale) ─▶ M9 (references + calibration) ─▶ M10 (harden + publish)
+  M6 (server compose) ─▶ M7 (web + UI) ─▶ M8 (H2 + locale)
+                                              │
+                                              ▼
+  M9 (agentic & CDP detection) ─▶ M10 (references + calibration) ─▶ M11 (harden + publish)
 ```
 
 - **M2 is the critical-path risk** — prove raw TLS capture first.
@@ -150,6 +173,9 @@ Part B (honeypot, consumes A)
   that a server-only or client-only consumer can use *before the honeypot exists*.
 - **M6+M7 is the first shippable honeypot** — the reference integration proving the
   libraries compose into the full three-layer, two-phase experience.
+- **M9 is the frontier** — on-device agentic-browser detection; pull it earlier if
+  catching Comet/Atlas/computer-use is the priority rather than a later hardening
+  step.
 
 ---
 
@@ -168,3 +194,7 @@ Part B (honeypot, consumes A)
    leave the browser.
 6. The stealth-headless case is caught by a **contradiction**, not a single flag —
    the thesis, demonstrated.
+7. **On-device agentic browsers** (Comet, Atlas, Claude computer-use, Operator) are
+   caught via input provenance + cadence + CDP leaks and labeled with an
+   `automationType`, while a human *using* an AI browser is not penalized —
+   [docs/14](14-agentic-and-cdp-detection.md).

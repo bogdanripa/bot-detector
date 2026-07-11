@@ -411,6 +411,25 @@ only users, password managers that autofill). So:
   programmatic focus with no pointer movement, submit on the same tick as the last
   key) are weighted higher because they're hard to produce accidentally.
 
+### 2.9 Agent-specific collectors (CDP leaks, input provenance, cadence, biometrics)
+
+The form-behavior collector above generalizes into four additional client-side
+collectors aimed at **real-browser AI agents** (Comet, Atlas, Claude computer-use,
+Operator, CDP stealth) that pass every passive check. These are specified in full
+in **[docs/14](14-agentic-and-cdp-detection.md)** and also ship in
+`@botdetect/client`:
+
+- **`cdpLeaks`** — the `Runtime.enable` console-getter probe and the rest of the
+  CDP/automation-driver leak set ([docs/14 §3](14-agentic-and-cdp-detection.md#3-signal-class-a--cdp--automation-driver-leaks)).
+- **`inputProvenance`** — teleporting/trail-less clicks, `getCoalescedEvents()`,
+  exact-integer-center landing, `movementX/Y` consistency — the class that catches
+  OS-level screenshot agents that `navigator.webdriver` and `isTrusted` both miss
+  ([docs/14 §4](14-agentic-and-cdp-detection.md#4-signal-class-b--input-provenance-catches-os-level-agents-)).
+- **`cadence`** — the perceive→think→act timing signature
+  ([docs/14 §5](14-agentic-and-cdp-detection.md#5-signal-class-c--screenshot-agent-cadence-perceive--think--act)).
+- **`biometrics`** — mouse Fitts/curvature/tremor, typing-latency distribution,
+  non-continuous scroll ([docs/14 §6](14-agentic-and-cdp-detection.md#6-signal-class-d--behavioral-biometrics-the-fp-agent-core)).
+
 ---
 
 ## 3. Collector orchestration (two phases)

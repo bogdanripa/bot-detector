@@ -36,6 +36,14 @@ bands in [docs/07 §4.1](07-coherence-engine.md#41-from-probability-to-band).
 | 19 | Real browser via CDP, no stealth | `suspicious` | subtle automation globals, behavior |
 | 20 | Hardened privacy browser (Tor/Brave resistFingerprinting) | `suspicious` (expected FP) | canvas blocked, spoofed values — **documented as an accepted false positive** |
 
+**Agentic rows (21–28)** — the on-device AI-agent clients (CDP stealth,
+`browser-use`, Perplexity Comet, ChatGPT Atlas, Claude computer-use, Operator,
+Operator+Web-Bot-Auth, and the false-positive guard "human reading in an AI
+browser"). These have their own expected `automationType` and are specified in
+**[docs/14 §11](14-agentic-and-cdp-detection.md#11-testing-additions-agent-matrix)**.
+They are the modern frontier and the reason for the input-provenance / cadence /
+CDP-leak collectors.
+
 **Phase rows** — for a subset, assert the **two-phase** behavior: the phase-1
 report lands the right band from passive signals, and phase 2 either raises
 confidence (real human filling the form naturally) or adds a behavioral `fail`

@@ -96,10 +96,18 @@ and **which layer they patched**. The tool's job is to place a client on this ma
 | `puppeteer-extra-plugin-stealth` | most single flags patched | browser-like | browser-like | **the hard case** — should still be caught by contradictions + behavior |
 | Anti-detect browser (Multilogin, GoLogin, etc.) | spoofed but often internally inconsistent | browser-like | may mismatch spoofed UA | caught by cross-layer coherence |
 | Real browser driven by CDP with no stealth | `webdriver` may be off, but automation globals / behavior tells | coherent | coherent | caught by behavior + subtle globals |
+| **CDP agent, stealthed** (`browser-use`, rebrowser/Patchright) | environment clean | coherent | coherent | **CDP leaks + input provenance + behavior** ([docs/14](14-agentic-and-cdp-detection.md)) |
+| **Agentic browser, on-device** (Comet, Atlas, Claude computer-use, Operator) | **environment fully clean, real OS** | coherent | coherent (real TLS, residential IP) | **the frontier** — caught by input provenance (teleporting clicks), screenshot cadence, behavioral biometrics, product artifacts, or Web Bot Auth ([docs/14](14-agentic-and-cdp-detection.md)) |
 
-The **design target** is the stealth-patched headless case: any single flag it
-patched should not save it if the *combination* of what it presents is
-internally inconsistent. That is the entire reason the coherence engine exists.
+Two **design targets**. (1) The stealth-patched headless case: any single flag it
+patched should not save it if the *combination* it presents is internally
+inconsistent — the cross-layer coherence engine. (2) The **on-device agentic
+browser** (a real Chromium driven by an AI agent on the user's own machine), which
+defeats Layers 2–3 and passive Layer 1 entirely and is caught by a *different*
+contradiction — a **pristine environment combined with non-human input and
+cadence**. This second target is the subject of [docs/14](14-agentic-and-cdp-detection.md),
+and the report labels *which kind* of automation it found via an `automationType`
+field.
 
 ## 6. What "detection" means here — a note on epistemics
 

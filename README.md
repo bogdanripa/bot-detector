@@ -85,6 +85,7 @@ the field *contents*.
 | 11 | [Testing & CI](docs/11-testing.md) | The validation matrix, automated harness, CI |
 | 12 | [Roadmap & milestones](docs/12-roadmap.md) | Ordered build steps: libraries first, honeypot second |
 | 13 | [Libraries & packaging](docs/13-libraries-and-packaging.md) | The two-part split: package boundaries, public APIs, the capability model, distribution |
+| 14 | [Agentic & CDP detection](docs/14-agentic-and-cdp-detection.md) | Catching real-browser AI agents (Comet, Atlas, Claude computer-use, Operator, CDP stealth): input provenance, screenshot cadence, behavioral biometrics, CDP leaks, Web Bot Auth |
 
 The honeypot self-hosts on a single server that terminates its own TLS. The split
 app-plus-edge-probe design is retained only as a
