@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Access granted</title>
+<script type="application/json" id="bd-bootstrap">__BD_BOOTSTRAP__</script>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 17px/1.6 system-ui, sans-serif; max-width: 36rem; margin: 0 auto; padding: 4rem 1.2rem; text-align: center; }
+  .ok { font-size: 3.4rem; color: #1a7f37; }
+  h1 { font-size: 1.5rem; }
+  p { color: #555; }
+  a { color: #0969da; }
+</style>
+</head>
+<body>
+  <div class="ok">✓</div>
+  <h1>Access granted</h1>
+  <p>You passed the checks and look human, so a production site would let you through.
+     (In <code>/test</code> mode we don't reveal the individual signals.)</p>
+  <p>Want the details? <a href="/debug">Run it in /debug mode</a> to see every check and score.</p>
+  <script src="/botdetect.js" defer></script>
+</body>
+</html>

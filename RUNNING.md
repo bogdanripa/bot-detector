@@ -20,6 +20,23 @@ The server generates a **self-signed** cert for local dev and terminates TLS
 itself (required for Layer-3 capture), speaking **HTTP/1.1** so header order is
 reliably captured. Open <https://localhost:8443/> and accept the cert warning.
 
+## Two modes
+
+The root (`/`) is a chooser linking two modes, each running the same 3-step funnel:
+
+- **`/test` — production mode.** Enforces. On every navigation the server computes a
+  **server-only** verdict (TLS/JA4 + header order + IP, before any client JS) and
+  returns **HTTP 403** (the "not allowed" page) when it's conclusively a bot. If a
+  client passes the server gate but the full client+server verdict comes back
+  `automated`, the client **redirects to `/test/forbidden`**. No report is shown.
+- **`/debug` — diagnostic mode.** Never blocks or redirects. The result page renders
+  the full checklist (per-check status + value + explanation), the contradictions,
+  and the overall automation probability / `automationType`.
+
+Verified: `curl /test` → **403** (server-only); headless Chromium on `/test` →
+served, then **client-redirected to `/test/forbidden`**; `curl`/browser on
+`/debug` → **200** with the full report.
+
 Config via env: `BD_ADDR` (`:8443`), `BD_WEB_DIR` (`honeypot/web`),
 `BD_CLIENT_JS` (`packages/client/botdetect.js`), `BD_SCORING` (`config/scoring.json`),
 `BD_IPASN_TSV` (optional IP→ASN table, see below).

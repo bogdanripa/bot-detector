@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bot / automation detector</title>
+<script type="application/json" id="bd-bootstrap">__BD_BOOTSTRAP__</script>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 17px/1.6 system-ui, sans-serif; max-width: 40rem; margin: 0 auto; padding: 3rem 1.2rem; }
+  h1 { font-size: 1.8rem; }
+  .cards { display: grid; gap: 1rem; margin-top: 2rem; }
+  a.card { display: block; padding: 1.2rem 1.4rem; border: 2px solid #888; border-radius: 12px; text-decoration: none; color: inherit; }
+  a.card:hover { border-color: #0969da; }
+  a.card b { font-size: 1.2rem; }
+  a.card span { color: #777; }
+  .t { color: #cf222e; } .d { color: #0969da; }
+</style>
+</head>
+<body>
+  <h1>Automation detector</h1>
+  <p>Two modes over the same 3-step funnel (landing → form → report). Both capture
+     TLS/JA4, header order, IP/ASN, browser environment, and interaction behavior.</p>
+  <div class="cards">
+    <a class="card" href="/test"><b class="t">/test — production mode</b><br>
+      <span>Acts like a real site. Blocks (403) obvious bots server-side, and redirects
+      detected bots to a "not allowed" page. No report shown.</span></a>
+    <a class="card" href="/debug"><b class="d">/debug — diagnostic mode</b><br>
+      <span>Never blocks. Shows the full checklist, per-check status, and the overall
+      automation probability in the page.</span></a>
+  </div>
+</body>
+</html>

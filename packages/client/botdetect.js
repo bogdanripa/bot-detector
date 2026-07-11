@@ -292,26 +292,51 @@
   }
 
   // ---------- honeypot per-step auto-init ----------
+  var FORBIDDEN = BOOT.forbidden || "/test/forbidden";
+  function isBot(report) { return report && report.score && report.score.band === "automated"; }
+  // In test mode, redirect a detected bot; returns true if it redirected.
+  function enforce(report) {
+    if (BOOT.mode === "test" && isBot(report)) { location.replace(FORBIDDEN); return true; }
+    return false;
+  }
+
   function initHoneypot() {
+    var link, form;
     if (BOOT.step === "landing") {
       var passive = null;
-      collectPassive().then(function (l1) { passive = l1; });
-      var link = document.querySelector("[data-bd-link]") || document.querySelector("a[href='/step-2']") || document.querySelector("a");
-      if (link) instrumentScrollAndLink(link, function () { return { layer1: passive }; });
+      collectPassive().then(function (l1) {
+        passive = l1;
+        link = document.querySelector("[data-bd-link]") || document.querySelector("a.cta") || document.querySelector("a");
+        if (BOOT.mode === "test") {
+          // fetch a verdict on load; block obvious bots before they can proceed
+          post("landing", { layer1: l1 }).then(function (rep) {
+            if (!enforce(rep) && link) instrumentScrollAndLink(link, function () { return { layer1: passive }; });
+          });
+        } else if (link) {
+          instrumentScrollAndLink(link, function () { return { layer1: passive }; });
+        }
+      });
     } else if (BOOT.step === "form") {
       var passiveF = null;
       collectPassive().then(function (l1) { passiveF = l1; });
-      var form = document.querySelector("form");
+      form = document.querySelector("form");
       if (form) {
         var flush = instrumentForm(form);
-        form.addEventListener("submit", function () {
-          beacon("form", { layer1: passiveF, behavior: flush(), traps: readTraps(form) });
-          // let the form POST to /api/submit → 303 /result
+        form.addEventListener("submit", function (e) {
+          var payload = { layer1: passiveF, behavior: flush(), traps: readTraps(form) };
+          if (BOOT.mode === "test") {
+            e.preventDefault();
+            post("form", payload).then(function (rep) {
+              if (!enforce(rep)) location.href = BOOT.submit || "/test/submit";
+            });
+          } else {
+            beacon("form", payload); // let the form POST to /<mode>/submit → /<mode>/result
+          }
         }, true);
       }
     } else if (BOOT.step === "result") {
       var mount = document.getElementById("bd-report");
-      if (mount) renderReport(BOOT.report, mount);
+      if (mount && BOOT.report) renderReport(BOOT.report, mount);
     }
   }
 

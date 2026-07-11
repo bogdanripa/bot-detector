@@ -80,6 +80,26 @@ GET  /api/health      liveness
 `/api/analyze` for its step; the engine aggregates across steps and `/result`
 renders the final report.
 
+### 1.2 Two modes: `/test` (enforce) and `/debug` (observe)
+
+The same funnel runs under two mode prefixes; the difference is the **action** taken
+on a verdict. The root `/` is a chooser.
+
+| | `/test` — production | `/debug` — diagnostic |
+|---|---|---|
+| Routes | `/test`, `/test/form`, `/test/result`, `/test/submit`, `/test/forbidden` | `/debug`, `/debug/form`, `/debug/result`, `/debug/submit` |
+| Server-side | On **every** navigation, scores a **server-only** SignalSet (Layer 2/3 + funnel — no client JS). If the band is `automated`, returns **HTTP 403** with the "not allowed" page. | Never 403s. |
+| Client-side | On load / on submit, fetches the full verdict; if `automated`, **redirects to `/test/forbidden`**. | Never redirects; the result page **renders the full report** (checks + scores + contradictions + probability). |
+| Result page | A generic "access granted" (no signals revealed) — or a 403 if the final verdict is `automated`. | The full report. |
+
+The **server-only gate** implements "403 when we're sure": it fires on the strong
+transport/HTTP contradictions available without a browser (TLS-vs-UA mismatch,
+library header order, funnel bypass) — so a raw `curl` is blocked on the first
+request, while a real browser passes the gate and is judged client-side. This is a
+faithful mini-model of a production anti-bot: cheap deterministic blocks up front,
+richer probabilistic judgement once JS runs. `/debug` is the same detection with
+enforcement turned off, for developers to see exactly what fired.
+
 ---
 
 ## 2. What each step captures (library wiring)

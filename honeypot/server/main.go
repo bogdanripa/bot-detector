@@ -55,11 +55,15 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", handleLanding)
-	mux.HandleFunc("/step-2", handleForm)
-	mux.HandleFunc("/result", handleResult)
+	mux.HandleFunc("/", handleIndex)
+	for _, mode := range []string{"test", "debug"} {
+		mux.HandleFunc("/"+mode, funnelHandler(mode, "landing"))
+		mux.HandleFunc("/"+mode+"/form", funnelHandler(mode, "form"))
+		mux.HandleFunc("/"+mode+"/result", funnelHandler(mode, "result"))
+		mux.HandleFunc("/"+mode+"/submit", submitHandler(mode))
+	}
+	mux.HandleFunc("/test/forbidden", handleForbidden)
 	mux.HandleFunc("/api/analyze", handleAnalyze)
-	mux.HandleFunc("/api/submit", handleSubmit)
 	mux.HandleFunc("/botdetect.js", handleClientJS)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 
@@ -90,6 +94,7 @@ type snapshot struct {
 }
 type session struct {
 	ID               string
+	Mode             string
 	CreatedMs        int64
 	StepOrder        []string
 	seen             map[string]bool
@@ -222,34 +227,92 @@ func (s *session) signalSet() schema.SignalSet {
 
 // ---- handlers ----
 
-func handleLanding(w http.ResponseWriter, r *http.Request) {
+func handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
 	}
-	s := getSession(w, r, true)
-	captureConn(s, r, "landing")
-	boot := map[string]any{"reportVersion": "1", "sessionId": s.ID, "step": "landing",
-		"funnelToken": s.Token, "captureMode": "self-hosted"}
-	servePage(w, "landing.html", boot)
+	servePage(w, "index.html", map[string]any{})
 }
 
-func handleForm(w http.ResponseWriter, r *http.Request) {
-	s := getSession(w, r, true)
-	captureConn(s, r, "form")
-	boot := map[string]any{"reportVersion": "1", "sessionId": s.ID, "step": "form"}
-	servePage(w, "form.html", boot)
+func handleForbidden(w http.ResponseWriter, r *http.Request) {
+	// Visited directly (after a client redirect) → 200 explanation page.
+	serveForbidden(w, http.StatusOK, "visited")
 }
 
-func handleResult(w http.ResponseWriter, r *http.Request) {
-	s := getSession(w, r, true)
-	captureConn(s, r, "result")
-	report := eng.Score(s.signalSet())
-	report.Step = "result"
-	report.GeneratedAtMs = nowMs()
-	report.Raw = rawEcho(s)
-	boot := map[string]any{"reportVersion": "1", "sessionId": s.ID, "step": "result", "report": report}
-	servePage(w, "result.html", boot)
+// funnelHandler serves one step of the funnel for a given mode.
+//   - test mode: server-side 403 when server-only signals are conclusively a bot;
+//     the result step 403s when the full verdict is automated, else shows success.
+//   - debug mode: never blocks; the result step renders the full report inline.
+func funnelHandler(mode, step string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		s := getSession(w, r, true)
+		s.Mode = mode
+		captureConn(s, r, step)
+
+		// TEST MODE — server-side gate (before any client JS runs).
+		if mode == "test" && serverOnlyBot(s) {
+			log.Printf("403 %s (server-only bot) ua=%q", r.URL.Path, short(r.Header.Get("User-Agent")))
+			serveForbidden(w, http.StatusForbidden, "server-only")
+			return
+		}
+
+		boot := map[string]any{"reportVersion": "1", "sessionId": s.ID, "step": step, "mode": mode,
+			"next": "/" + mode + "/form", "submit": "/" + mode + "/submit", "forbidden": "/test/forbidden"}
+		if step == "landing" {
+			boot["funnelToken"] = s.Token
+		}
+
+		switch step {
+		case "landing":
+			servePage(w, "landing.html", boot)
+		case "form":
+			servePage(w, "form.html", boot)
+		case "result":
+			report := eng.Score(s.signalSet())
+			report.Step = "result"
+			report.GeneratedAtMs = nowMs()
+			report.Raw = rawEcho(s)
+			boot["report"] = report
+			if mode == "test" {
+				if report.Score.Band == "automated" {
+					serveForbidden(w, http.StatusForbidden, "final-verdict")
+					return
+				}
+				servePage(w, "test-result.html", boot)
+			} else {
+				servePage(w, "result.html", boot)
+			}
+		}
+	}
+}
+
+func submitHandler(mode string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/"+mode+"/result", http.StatusSeeOther)
+	}
+}
+
+// serverOnlyBot scores using only server-captured signals (no client Layer 1 /
+// behavior). "Sure it's a bot" = the server-only verdict is automated.
+func serverOnlyBot(s *session) bool {
+	ss := schema.SignalSet{Layer2: s.Layer2, Layer3: s.Layer3, Funnel: s.funnel()}
+	return eng.Score(ss).Score.Band == "automated"
+}
+
+func serveForbidden(w http.ResponseWriter, status int, reason string) {
+	b, err := os.ReadFile(webDir + "/forbidden.html")
+	if err != nil {
+		http.Error(w, "Forbidden — automated traffic is not allowed here.", status)
+		return
+	}
+	boot := map[string]any{"reason": reason}
+	bj, _ := json.Marshal(boot)
+	html := strings.ReplaceAll(string(b), "__BD_BOOTSTRAP__", string(bj))
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")
+	w.WriteHeader(status)
+	w.Write([]byte(html))
 }
 
 func handleAnalyze(w http.ResponseWriter, r *http.Request) {
@@ -293,10 +356,6 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, report)
 }
 
-func handleSubmit(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/result", http.StatusSeeOther)
-}
-
 func handleClientJS(w http.ResponseWriter, r *http.Request) {
 	b, err := os.ReadFile(clientJS)
 	if err != nil {
@@ -320,7 +379,12 @@ func servePage(w http.ResponseWriter, name string, boot map[string]any) {
 		return
 	}
 	bj, _ := json.Marshal(boot)
-	html := strings.Replace(string(b), "__BD_BOOTSTRAP__", string(bj), 1)
+	html := strings.ReplaceAll(string(b), "__BD_BOOTSTRAP__", string(bj))
+	for _, k := range []string{"next", "submit", "forbidden"} {
+		if v, ok := boot[k].(string); ok {
+			html = strings.ReplaceAll(html, "__"+strings.ToUpper(k)+"__", v)
+		}
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'")
 	w.Write([]byte(html))
