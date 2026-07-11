@@ -197,6 +197,73 @@ A click that is (approach-trail ≈ 0) **and** (coalesced ≈ 0) **and** (exact
 integer center) is an extremely strong `agentic-os` / `agentic-cdp` signal, and it
 holds even against a perfectly clean fingerprint.
 
+### 4.2 Scroll provenance ⭐ (how the viewport got where it is)
+
+The same provenance question, applied to scrolling — and the honeypot **forces the
+issue** by placing the Page-1 link **below the fold**, so the funnel cannot be
+completed without moving the viewport ([docs/02 §1](02-deployment-topology.md#1-the-funnel)).
+*How* that scroll happened is a strong tell.
+
+| How the viewport moved | Fires `wheel`? | Position lands… | Velocity |
+|------------------------|:--------------:|-----------------|----------|
+| **Human mouse wheel** | ✅ many `wheel` (line/pixel deltas) | wherever the user stops — element **not** pixel-aligned | accelerate/decelerate, variable |
+| **Human trackpad / touch** | ✅ `wheel`/`touchmove` with **fractional** deltas + **momentum/inertia** | not aligned | smooth inertial decay |
+| **Human keyboard** (Space/PageDown/↓) | ❌ (fires `keydown`) | page-sized steps | stepwise |
+| **Human scrollbar drag** | ❌ (fires `pointerdown` on the track/thumb + `scroll`) | wherever released | manual |
+| **Programmatic** `scrollIntoView()` / `scrollTo()` / `scrollTop=` (incl. Playwright `scrollIntoViewIfNeeded`, Puppeteer autoscroll) | ❌ **no wheel, no key, no scrollbar gesture** | **exactly aligned** to the element (top/center per `block`) | **instant teleport** (one frame) or a single fixed easing |
+
+**The discriminator (robust, with the false-positive guards):**
+
+> The link scrolled into view with a **position change but no originating input
+> event at all** — no `wheel`, no `touchmove`, no scroll-affecting `keydown`, no
+> scrollbar `pointerdown` — **and** it landed **pixel-aligned** to the element,
+> **and** the position changed in essentially **one frame** (or one fixed easing
+> curve). That combination is `scrollIntoView`/`scrollTo`, i.e. an automated scroll.
+
+Do **not** rely on "no `wheel`" alone — keyboard scrollers, scrollbar-draggers, and
+"find in page" are legitimate humans who don't fire `wheel`. The signal is the
+*combination*: **zero user gesture of any kind** + **exact element alignment** +
+**single-frame teleport**. Any genuine gesture (wheel/touch/key/scrollbar) that
+preceded the position change clears it.
+
+```js
+// Was the scroll to the link human-driven or programmatic?
+let lastGesture = 0, wheelCount = 0, wheelFractional = false;
+for (const ev of ['wheel','touchmove']) addEventListener(ev, e => {
+  lastGesture = e.timeStamp;
+  if (e.type === 'wheel') { wheelCount++; if (e.deltaY % 1 !== 0) wheelFractional = true; }
+}, { passive: true, capture: true });
+for (const ev of ['keydown','pointerdown']) addEventListener(ev, e => { lastGesture = e.timeStamp; }, true);
+
+let prevY = scrollY, teleport = false;
+addEventListener('scroll', () => {
+  const jumped = Math.abs(scrollY - prevY) > 300;               // big single-tick move
+  const noGesture = performance.now() - lastGesture > 120;      // no input just before this scroll
+  if (jumped && noGesture) teleport = true;
+  prevY = scrollY;
+}, { passive: true });
+
+// When the link finally enters view, snapshot provenance:
+function onLinkVisible(linkEl) {
+  const r = linkEl.getBoundingClientRect();
+  const alignedTop = Math.abs(r.top) < 2;                       // scrollIntoView(block:'start')
+  const alignedCenter = Math.abs(r.top + r.height/2 - innerHeight/2) < 2;
+  record('scrollToLink', {
+    wheelCount, wheelFractional, teleport,
+    landedPixelAligned: alignedTop || alignedCenter,
+    anyUserGesture: lastGesture > 0,
+  });
+}
+```
+
+`teleport && !anyUserGesture && landedPixelAligned` ⇒ **`scrollIntoView`-style
+automated scroll** — a strong tell, and (like the honeypot traps) it also aids
+**DOM-vs-vision attribution**: DOM agents (Playwright/`browser-use`) call
+`scrollIntoViewIfNeeded` and land pixel-aligned; vision/OS agents (computer-use)
+tend to emit wheel-like gestures (they scroll to *see* the pixels) but with
+quantized, regular deltas and no inertia. Scroll dynamics as a biometric (curvature
+of the scroll-velocity curve, inertia, overshoot-and-settle) are in §6.
+
 ---
 
 ## 5. Signal class C — screenshot-agent cadence (perceive → think → act)
@@ -268,11 +335,12 @@ where several of your ideas land)
 - **DOM `input`/`change` event counts vs. keystrokes** — a value that appears with
   far fewer `keydown`s than characters is set, not typed.
 
-**Scroll dynamics**
+**Scroll dynamics** (see the dedicated **scroll provenance** treatment in §4.2 —
+the Page-1 link is below the fold specifically to elicit this)
 - Continuous wheel/trackpad deltas with **fractional** `deltaY` and momentum/
-  overshoot (human) vs. **integer, uniform** deltas, discrete jumps, or programmatic
-  `scrollTo`/`scrollIntoView` that lands the element **exactly** at top/center
-  (agent).
+  overshoot and a human accelerate→settle velocity curve (human) vs. **integer,
+  uniform** deltas, discrete jumps, or a programmatic `scrollTo`/`scrollIntoView`
+  that lands the element **exactly** aligned with **no originating gesture** (agent).
 
 All of these live in the client behavior collector and feed the engine's bounded
 behavior group — but with an **agent-aware sub-weighting** (§9): for a client with
@@ -452,6 +520,8 @@ one pivotal new idea.
 | | value set programmatically (no keydown, no paste, no `:autofill` pseudo-class) | +2.5 |
 | | `screenX==clientX` / `movementX/Y==0` on click | +1.5 |
 | | impossibly low `mousemove` count in an interactive session | +2.0 |
+| Scroll provenance (§4.2) | reached the below-fold link via a **teleport scroll** (no wheel/touch/key/scrollbar gesture) landing **pixel-aligned** ⇒ `scrollIntoView`/`scrollTo` | +2.5, aids DOM-vs-vision attribution |
+| | wheel deltas integer & uniform with no inertia (vs. human fractional + momentum) | +1.0 |
 | Screenshot cadence (§5) | multi-second bursty action gaps + zero idle motion + non-continuous scroll | +2.5 (combined, phase 2) |
 | Behavioral biometrics (§6) | constant mouse speed / near-zero acceleration / single smooth Bézier; uniform (metronomic) inter-key latency; zero typos across a long form | promoted for clean-fingerprint clients (§9.2) |
 | Honeypot traps (§8B) | DOM honeypot field filled | +3.0, ⇒ `agentic-cdp`/`agentic-ext` |

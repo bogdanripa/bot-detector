@@ -62,6 +62,11 @@ Each page carries its own `step`; Page 1 also carries the click-gated `funnelTok
   "sessionId": "6f1c…-uuid",
   "step": "landing",
   "collectedAtMs": 1731000000000,     // client clock; display-only, never trusted
+  "scrollToLink": {                   // scroll-provenance to the below-fold link (docs/14 §4.2)
+    "reachedLink": true, "wheelCount": 14, "wheelFractional": true, "touchScroll": false,
+    "keyboardScroll": false, "scrollbarDrag": false, "anyUserGesture": true,
+    "teleport": false, "landedPixelAligned": false, "scrollEvents": 23
+  },
   "linkClick": {                      // input-provenance of the Page-1 link click (docs/14 §4)
     "occurred": true, "isTrusted": true, "approachPoints": 37, "coalescedNearby": 21,
     "atExactIntegerCenter": false, "dwellBeforeClickMs": 2400, "sourceCapabilitiesPresent": true

@@ -50,23 +50,26 @@ The honeypot is a three-page funnel; each page is a real navigation the server
 re-captures, and each transition between pages is itself a detection signal.
 
 ```
-PAGE 1  GET /          Landing: some text + a link.
+PAGE 1  GET /          Landing: some text + a link placed BELOW THE FOLD.
    │   server captures Layer 2 (headers, order) + Layer 3 (TLS/JA4, HTTP2, IP/ASN);
-   │   client collects passive Layer 1 + instruments the LINK click.
-   │        ↓  the user CLICKS the link  (a real, trusted, approached click)
+   │   client collects passive Layer 1 + instruments the SCROLL + the LINK click.
+   │        ↓  the user SCROLLS to the link, then CLICKS it (real gesture + real click)
 PAGE 2  GET /step-2     Form: name/email/topic/message + submit (+ hidden honeypot traps).
-   │   server re-captures Layer 2/3 and VERIFIES the transition (was it a real click?);
+   │   server re-captures Layer 2/3 and VERIFIES the transition (real scroll + click?);
    │   client collects passive Layer 1 again + form behavior + trap outcomes.
    │        ↓  the user FILLS + SUBMITS the form
 PAGE 3  GET /result     Report: the green/amber/red verdict, automationType, and
         the full checklist — aggregated across all three steps.
 ```
 
-Two natural interactions (a link click, then a form fill) instead of an artificial
-"interact here" box — and the funnel turns the **transitions** into signals: did a
-real click produce Page 2, or did the client deep-link to the form URL? Is it the
-**same JA4/IP** across all three navigations? We record interaction *dynamics* and
-funnel *integrity*, never the field *contents*. See [docs/02](docs/02-deployment-topology.md).
+Three natural interactions — a **scroll** (the link is below the fold, so you must
+scroll to reach it), a **link click**, then a **form fill** — instead of an
+artificial "interact here" box. The funnel turns the **transitions** into signals:
+did a *real scroll gesture* bring the link into view, or an automated
+`scrollIntoView()` teleport? Did a real click produce Page 2, or did the client
+deep-link to the form URL? Is it the **same JA4/IP** across all three navigations?
+We record interaction *dynamics* and funnel *integrity*, never the field
+*contents*. See [docs/02](docs/02-deployment-topology.md).
 
 ## Documentation
 

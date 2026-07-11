@@ -20,11 +20,12 @@ Three pages, each a real navigation, each instrumented server- and client-side:
 
 ```
   ┌────────────────────────────────────────────────────────────────────────┐
-  │  PAGE 1  —  GET /            "Landing": some text + a link               │
+  │  PAGE 1  —  GET /       "Landing": text, then a link BELOW THE FOLD       │
   │  server: capture connSignals #1 (TLS/JA4, header order, Sec-Fetch, IP)   │
-  │  client: @botdetect/client → passive Layer 1 + instrument the LINK       │
+  │  client: @botdetect/client → passive L1 + instrument the SCROLL + LINK   │
   └───────────────┬────────────────────────────────────────────────────────┘
-                  │  user CLICKS the link  (a real, trusted, approached click)
+                  │  user SCROLLS to reach the link, then CLICKS it
+                  │  (a real scroll gesture + a real, trusted, approached click)
                   ▼
   ┌────────────────────────────────────────────────────────────────────────┐
   │  PAGE 2  —  GET /step-2      "Form": name/email/topic/message + submit   │
@@ -40,10 +41,15 @@ Three pages, each a real navigation, each instrumented server- and client-side:
   └────────────────────────────────────────────────────────────────────────┘
 ```
 
-Why a funnel beats a single page: it elicits **two natural interactions** (a link
-click, then a form fill) instead of an artificial "interact here" box, and it
-turns the **transitions between pages** into first-class detection signals (§3) —
-signals that only exist when detection spans multiple navigations.
+Why a funnel beats a single page: it elicits **three natural interactions** — a
+**scroll** (the Page-1 link sits **below the fold**, so you must scroll to reach
+it), a **link click**, then a **form fill** — instead of an artificial "interact
+here" box, and it turns the **transitions between pages** into first-class
+detection signals (§3) that only exist when detection spans multiple navigations.
+The below-fold link matters because *how you scroll* is a strong tell: humans emit
+a stream of wheel/touch/keyboard gestures with inertia, while automation usually
+reaches an element with `scrollIntoView()` — an instant, pixel-aligned jump with no
+gesture at all ([docs/14 §4.2](14-agentic-and-cdp-detection.md#42-scroll-provenance--how-the-viewport-got-where-it-is)).
 
 ### 1.1 Routes
 
@@ -83,11 +89,16 @@ requirement made concrete.
   IP→ASN. Also check Web Bot Auth signature headers ([docs/14 §8](14-agentic-and-cdp-detection.md#8-signal-class-f--positive-agent-identification-web-bot-auth)).
   Mint `sessionId`; store `connSignals #1` under it; issue a **funnel token** the
   link will carry (§4).
-- **Client** (`@botdetect/client`): `collectPassive()` (Layer 1), and
-  **instrument the link** — record the input provenance of the click
-  ([docs/14 §4](14-agentic-and-cdp-detection.md#4-signal-class-b--input-provenance-catches-os-level-agents-)):
-  approach trail, `isTrusted`, coalesced samples, landing offset, and the dwell
-  before clicking. POST `/api/analyze { step: 'landing', layer1, linkClick }`.
+- **Client** (`@botdetect/client`): `collectPassive()` (Layer 1); render the link
+  **below the fold**; and instrument **both** the scroll and the click —
+  - **scroll provenance** ([docs/14 §4.2](14-agentic-and-cdp-detection.md#42-scroll-provenance--how-the-viewport-got-where-it-is)):
+    did the link enter view via a real gesture (wheel/touch/key/scrollbar, with
+    inertia) or a **teleport** `scrollIntoView`/`scrollTo` (no gesture,
+    pixel-aligned landing)?
+  - **click provenance** ([docs/14 §4](14-agentic-and-cdp-detection.md#4-signal-class-b--input-provenance-catches-os-level-agents-)):
+    approach trail, `isTrusted`, coalesced samples, landing offset, dwell.
+
+  POST `/api/analyze { step: 'landing', layer1, scrollToLink, linkClick }`.
 
 ### Page 2 — Form (`GET /step-2`)
 
@@ -125,21 +136,28 @@ Real users traverse `/` → `/step-2` → `/result` **in order**. A request to
 client **jumped straight to a deep URL** — typical of crawlers and DOM agents that
 enumerate links, or an agent told "go to the form." Strong `funnel_bypass` signal.
 
-### 3.2 The click that produced Page 2
+### 3.2 The scroll-and-click that produced Page 2
 
-The navigation to `/step-2` should be the result of a **real click on Page 1's
-link**:
+Page 1's link is **below the fold**, so reaching Page 2 requires **scrolling then
+clicking** — two provenance checks in one transition:
 
-- `Sec-Fetch-User: ?1` (the navigation was **user-activated**) and
-  `Sec-Fetch-Site: same-origin`, `Sec-Fetch-Dest: document`;
-- `Referer: https://app.example.com/`;
-- a **click-activated funnel token** (§4) — proof a *trusted, approached* click
-  occurred, not a programmatic `location = '/step-2'` or a direct GET.
+- **Scroll to the link** ([docs/14 §4.2](14-agentic-and-cdp-detection.md#42-scroll-provenance--how-the-viewport-got-where-it-is)):
+  the link should enter the viewport via a **real gesture** (wheel/touch/keyboard/
+  scrollbar, with human inertia and non-aligned landing). A **teleport**
+  `scrollIntoView()`/`scrollTo()` — position jumps in one frame, no originating
+  gesture, link lands **pixel-aligned** — is the automation tell (and DOM agents
+  like Playwright/`browser-use` do exactly this before clicking).
+- **The click** should be user-activated: `Sec-Fetch-User: ?1`,
+  `Sec-Fetch-Site: same-origin`, `Sec-Fetch-Dest: document`,
+  `Referer: https://app.example.com/`, and a **click-activated funnel token**
+  (§4) — proof a *trusted, approached* click occurred, not `location = '/step-2'`
+  or a direct GET.
 
-Missing `Sec-Fetch-User`, absent Referer, or an un-activated token ⇒ the link was
-**not clicked by a human** (direct navigation / synthetic click). This is the
-funnel's version of "did a real hand click the link, or did the agent navigate to
-the URL?" — and it's one of the cleanest agent tells available.
+Missing `Sec-Fetch-User`/Referer/token, **or** a teleport-scroll into the link,
+⇒ the link was **not reached and clicked by a human hand**. This is the funnel's
+version of "did a real person scroll down and click, or did the agent
+`scrollIntoView` + navigate to the URL?" — among the cleanest agent tells
+available.
 
 ### 3.3 Cross-page timing
 

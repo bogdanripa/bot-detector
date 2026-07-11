@@ -23,22 +23,35 @@ One small same-origin JS bundle + CSS, served on every page.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  HEADER: title + one-line purpose                            │
-│                                                              │
-│  A short paragraph of real, readable copy (gives a human a   │
-│  reason to pause and read — dwell is measured).              │
-│                                                              │
+│  HEADER: title + one-line purpose                            │ ┐
+│                                                              │ │ initial
+│  A short paragraph of real, readable copy (gives a human a   │ │ viewport
+│  reason to pause and read — dwell is measured).              │ │ (above
+│                                                              │ │  the fold)
+│  … more copy so the link is NOT initially visible …         │ ┘
+│ - - - - - - - - - - - fold - - - - - - - - - - - - - - - - - │
+│                       ↓ must scroll ↓                        │
 │              →  [ Continue to the check ]  ←  (the LINK)      │
 │                                                              │
 │  (silent) @botdetect/client: passive Layer 1 + instrument    │
-│  the link click (approach trail, trusted, coalesced, dwell)  │
+│  the SCROLL (provenance) + the link click (trail, trusted…)  │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-The link is an ordinary `<a href="/step-2?…">`. On a **trusted** click the client
-activates the funnel token ([docs/02 §4](02-deployment-topology.md#4-the-click-gated-funnel-token))
-and the browser navigates normally to Page 2. An agent that jumps straight to
-`/step-2` skips this and trips `funnel_bypass`.
+The link (`<a href="/step-2?…">`) sits **below the fold**, so the user must
+**scroll** to reach it — making *how they scroll* a measured signal
+([docs/14 §4.2](14-agentic-and-cdp-detection.md#42-scroll-provenance--how-the-viewport-got-where-it-is)):
+a real wheel/touch/keyboard scroll with inertia, vs. an automated
+`scrollIntoView()` teleport (no gesture, pixel-aligned). On a **trusted** click the
+client activates the funnel token
+([docs/02 §4](02-deployment-topology.md#4-the-click-gated-funnel-token)) and the
+browser navigates to Page 2. An agent that `scrollIntoView`s the link then clicks,
+or jumps straight to `/step-2`, trips scroll-provenance and/or `funnel_bypass`.
+
+> **Accessibility:** below-the-fold is a *layout* choice, not a trap — keyboard
+> users Tab to the link (the browser scrolls it into view on focus, a legitimate
+> non-wheel gesture that is **not** penalized), and it remains reachable by every
+> assistive path. Only a *gesture-less* programmatic teleport is a tell.
 
 ### Page 2 — Form (`GET /step-2`)
 
