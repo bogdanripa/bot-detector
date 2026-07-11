@@ -112,3 +112,9 @@ HOST=user@VM_IP ./deploy/deploy.sh   # build + scp + systemctl restart
 Recommended target: **GCP always-free `e2-micro`** (us-west1/central1/east1) +
 a free **DuckDNS** domain + Let's Encrypt = **$0**. Steps in
 [`deploy/README.md`](deploy/README.md).
+
+**Push-to-deploy:** [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
+tests, builds the static binary, and ships it over SSH on every push (after a
+one-time VM setup + three repo secrets — see
+[`deploy/README.md` §5](deploy/README.md)). Until the secrets are set it just
+runs build+test and skips the deploy step.

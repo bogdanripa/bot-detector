@@ -68,7 +68,53 @@ First start, autocert fetches a cert from Let's Encrypt (needs :80 reachable —
 firewall rule above). Then browse to **https://yourname.duckdns.org/** — a real
 cert, no warnings.
 
-## 5. (Optional) full IP→ASN coverage
+## 5. Automated deploy via GitHub Actions
+
+`.github/workflows/deploy.yml` builds the binary and ships it over SSH on every
+push to `main` (or via **Run workflow** / `workflow_dispatch`). The one-time VM
+setup above is the prerequisite; the Action only updates the binary + restarts.
+
+**a) A locked-down deploy user on the VM** (owns `/opt/honeypot`, one sudo rule):
+
+```bash
+# on the VM
+sudo useradd -m -s /bin/bash deployer
+sudo chown -R deployer:deployer /opt/honeypot           # deployer writes the binary…
+sudo chown -R honeypot:honeypot /opt/honeypot/certs     # …honeypot writes the certs
+echo 'deployer ALL=(root) NOPASSWD: /usr/bin/systemctl restart honeypot' \
+  | sudo tee /etc/sudoers.d/deployer-honeypot
+sudo chmod 440 /etc/sudoers.d/deployer-honeypot
+```
+
+**b) A deploy SSH key** (keep the private half in GitHub, put the public half on
+the VM):
+
+```bash
+# on your laptop
+ssh-keygen -t ed25519 -f deploy_key -N '' -C 'gh-actions-deploy'
+# add the PUBLIC key to the VM's deployer user:
+ssh-copy-id -i deploy_key.pub deployer@VM_IP     # or append deploy_key.pub to ~deployer/.ssh/authorized_keys
+# host key for pinning (optional but recommended):
+ssh-keyscan VM_IP
+```
+
+**c) Repo secrets** (Settings → Secrets and variables → Actions):
+
+| Secret | Value |
+|--------|-------|
+| `DEPLOY_HOST` | `deployer@VM_IP` |
+| `DEPLOY_SSH_KEY` | contents of the **private** `deploy_key` |
+| `DEPLOY_KNOWN_HOSTS` | (optional) the `ssh-keyscan VM_IP` output — pins the host key |
+
+**d) SSH reachability:** the runner needs port **22** open to the VM. GCP's
+`default-allow-ssh` rule usually covers this; GitHub runner IPs are dynamic, so 22
+is open to the internet (fine for a demo — harden later with IAP/a bastion, or
+restrict to GitHub's published IP ranges).
+
+Push to `main` → the workflow tests, builds a static binary, scp's it, and
+restarts the service. Rollbacks are just a revert + push.
+
+## 6. (Optional) full IP→ASN coverage
 
 Built-in cloud ranges work out of the box. For every routed IP, drop the free
 iptoasn table on the VM and point `BD_IPASN_TSV` at it:
