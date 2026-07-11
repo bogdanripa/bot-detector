@@ -1,0 +1,43 @@
+{
+  "configVersion": "1",
+  "reportVersion": "1",
+  "bias": -3.0,
+  "bands": { "human": 0.30, "automated": 0.70 },
+  "criticalFloorWeight": 4.5,
+  "transportContradictionCap": 7.0,
+  "behaviorGroupCap": 1.5,
+  "signals": {
+    "cdc_artifacts":            { "weight": 3.2, "status": "fail", "title": "ChromeDriver cdc_ artifacts", "explanation": "cdc_ properties are injected by ChromeDriver (Selenium)." },
+    "selenium_attributes":      { "weight": 3.2, "status": "fail", "title": "Selenium DOM attributes", "explanation": "Selenium leaves __webdriver/__selenium attributes on the document." },
+    "phantom_globals":          { "weight": 3.2, "status": "fail", "title": "PhantomJS/Nightmare globals", "explanation": "Headless scripting globals (_phantom, __nightmare) present." },
+    "playwright_bindings":      { "weight": 3.0, "status": "fail", "title": "Playwright/Puppeteer bindings", "explanation": "Automation binding globals detected (__pwInitScripts etc.)." },
+    "navigator_webdriver":      { "weight": 2.6, "status": "fail", "title": "navigator.webdriver", "explanation": "Set to true by WebDriver-controlled browsers." },
+    "node_globals":             { "weight": 2.6, "status": "fail", "title": "Node globals in the browser", "explanation": "Buffer/process/require present — Node context leaking into the page." },
+    "cdp_runtime_enable":       { "weight": 4.5, "status": "fail", "title": "CDP Runtime.enable leak", "explanation": "A console-getter fired, revealing a Chrome DevTools Protocol client (Puppeteer/Playwright/Selenium)." },
+    "anti_tamper_patched":      { "weight": 2.4, "status": "fail", "title": "Patched navigator getter", "explanation": "A navigator property getter is not native code — an anti-detect patch." },
+    "chrome_runtime_missing":   { "weight": 1.0, "status": "warn", "title": "window.chrome.runtime missing", "explanation": "UA claims Chrome but chrome.runtime is absent." },
+    "headless_ua":              { "weight": 3.0, "status": "fail", "title": "HeadlessChrome in UA", "explanation": "User-Agent contains HeadlessChrome." },
+    "permissions_contradiction":{ "weight": 2.2, "status": "fail", "title": "Permissions/Notification contradiction", "explanation": "Permissions API state is impossible vs. Notification.permission (classic headless tell)." },
+    "impossible_geometry":      { "weight": 2.0, "status": "fail", "title": "Impossible window geometry", "explanation": "outerWidth/Height is 0 or screen.width < innerWidth." },
+    "languages_empty":          { "weight": 1.2, "status": "warn", "title": "Empty navigator.languages", "explanation": "navigator.languages is empty or missing." },
+    "no_plugins":               { "weight": 1.0, "status": "warn", "title": "No plugins/mimeTypes", "explanation": "plugins.length and mimeTypes.length are 0 on a desktop Chrome UA." },
+    "software_webgl":           { "weight": 0.9, "status": "warn", "title": "Software WebGL renderer", "explanation": "SwiftShader/llvmpipe renderer — common in headless/VM/CI." },
+    "implausible_hardware":     { "weight": 0.8, "status": "warn", "title": "Implausible hardwareConcurrency", "explanation": "hardwareConcurrency is 0/1 or absurdly high." },
+    "canvas_blocked":           { "weight": 1.0, "status": "warn", "title": "Canvas blocked/zeroed", "explanation": "Canvas readback is blocked or zeroed." },
+    "missing_client_hints":     { "weight": 1.5, "status": "warn", "title": "Missing Sec-CH-UA on Chromium UA", "explanation": "UA claims Chromium but no Sec-CH-UA header." },
+    "missing_sec_fetch":        { "weight": 1.5, "status": "warn", "title": "Missing Sec-Fetch-* on Chromium UA", "explanation": "Chromium sends Sec-Fetch-* on navigations; absent here." },
+    "minimal_accept":           { "weight": 1.5, "status": "warn", "title": "Minimal Accept/Accept-Encoding", "explanation": "Accept/Accept-Encoding look like an HTTP library default, not a browser." },
+    "ip_datacenter":            { "weight": 0.9, "status": "warn", "title": "IP is datacenter-owned", "explanation": "Datacenter/cloud ASN. A contributor, not proof (VPNs, cloud shells)." },
+    "scroll_teleport":          { "weight": 2.5, "status": "fail", "title": "scrollIntoView teleport", "explanation": "Reached the link via a gesture-less, pixel-aligned scroll jump (scrollIntoView/scrollTo)." },
+    "click_no_trail":           { "weight": 3.0, "status": "fail", "title": "Click with no approach trail", "explanation": "A click with no preceding pointer movement and/or at the exact element center — injected input." },
+    "behavior_scripted":        { "weight": 1.2, "status": "warn", "title": "Scripted form fill", "explanation": "Sub-human fill time, zero-variance typing, or values set with no keystrokes." }
+  },
+  "contradictions": {
+    "tls_ua_vendor_mismatch":   { "weight": 5.5, "severity": "critical", "title": "TLS fingerprint vs User-Agent", "explanation": "The TLS ClientHello matches a scripting stack (curl/Go/Python) but the UA claims a browser. A real browser cannot emit that ClientHello." },
+    "header_order_is_library":  { "weight": 3.0, "severity": "high", "title": "Header order matches an HTTP library", "explanation": "The request header order matches curl/requests/Go rather than any browser." },
+    "cross_nav_inconsistency":  { "weight": 3.0, "severity": "high", "title": "Fingerprint changed between pages", "explanation": "JA4/UA/IP changed across the funnel's navigations — a multi-tool pipeline." },
+    "funnel_bypass":            { "weight": 2.6, "severity": "high", "title": "Funnel bypass / deep-link", "explanation": "Reached a later step out of order or without a real click on the previous page." },
+    "clean_env_agentic_behavior": { "weight": 3.5, "severity": "high", "title": "Clean environment, non-human input", "explanation": "A pristine real-browser environment combined with teleporting/trail-less input or teleport scroll — an agent driving a real browser." },
+    "permissions_contradiction": { "weight": 2.2, "severity": "medium", "title": "Permissions contradiction", "explanation": "Permissions API state impossible vs. Notification.permission." }
+  }
+}

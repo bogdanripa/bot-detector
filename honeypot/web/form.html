@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>One step to your result</title>
+<script type="application/json" id="bd-bootstrap">__BD_BOOTSTRAP__</script>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 17px/1.6 system-ui, sans-serif; max-width: 34rem; margin: 0 auto; padding: 2rem 1.2rem; }
+  h1 { font-size: 1.5rem; }
+  label { display: block; margin: 1rem 0 .3rem; font-weight: 600; }
+  input, textarea, select { width: 100%; padding: .6rem; font: inherit; border: 1px solid #999; border-radius: 6px; box-sizing: border-box; }
+  button { margin-top: 1.4rem; padding: .7rem 1.4rem; background: #1a7f37; color: #fff; border: 0; border-radius: 8px; font: inherit; font-weight: 600; cursor: pointer; }
+  .note { color: #777; font-size: .9rem; }
+  .hp { position: absolute; left: -9999px; top: -9999px; width: 1px; height: 1px; overflow: hidden; }
+</style>
+</head>
+<body>
+  <h1>Tell us a little, then see your result</h1>
+  <p class="note">We measure <em>how</em> you fill this in — timing and movement — never what you type.
+     Nothing is submitted anywhere.</p>
+  <form action="/api/submit" method="post" autocomplete="off">
+    <label for="name">Name</label>
+    <input id="name" name="name" type="text">
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email">
+    <label for="topic">Topic</label>
+    <select id="topic" name="topic"><option>General</option><option>Sales</option><option>Support</option></select>
+    <label for="message">Message</label>
+    <textarea id="message" name="message" rows="3"></textarea>
+    <!-- DOM honeypot: invisible to humans, filled by DOM-parsing agents -->
+    <div class="hp" aria-hidden="true"><label>Leave this empty</label><input data-bd-honeypot name="company_url" tabindex="-1" autocomplete="off"></div>
+    <button type="submit">See my result ▸</button>
+  </form>
+  <script src="/botdetect.js" defer></script>
+</body>
+</html>

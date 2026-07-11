@@ -15,3 +15,9 @@ node_modules/
 
 # OS noise
 .DS_Store
+
+# Go build output
+/bin/
+
+# npm artifacts from local browser-driving tests
+package-lock.json

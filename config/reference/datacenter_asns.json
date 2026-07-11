@@ -1,0 +1,20 @@
+{
+  "referenceVersion": "1",
+  "datacenter_asns": {
+    "16509": "AWS", "14618": "AWS", "8987": "AWS",
+    "15169": "GOOGLE", "396982": "GOOGLE-CLOUD", "19527": "GOOGLE",
+    "8075": "MICROSOFT-AZURE", "8068": "MICROSOFT",
+    "16276": "OVH", "35540": "OVH",
+    "24940": "HETZNER", "213230": "HETZNER",
+    "14061": "DIGITALOCEAN",
+    "20473": "VULTR", "64515": "VULTR",
+    "63949": "AKAMAI-LINODE", "20940": "AKAMAI", "48447": "LINODE",
+    "12876": "SCALEWAY", "9370": "SAKURA",
+    "31898": "ORACLE-CLOUD",
+    "51167": "CONTABO",
+    "9009": "M247", "60068": "M247",
+    "45102": "ALIBABA", "37963": "ALIBABA-CN",
+    "132203": "TENCENT", "45090": "TENCENT",
+    "association": "hosting/cloud ASNs — a moderate red flag, not proof"
+  }
+}
