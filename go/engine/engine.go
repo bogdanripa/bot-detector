@@ -68,16 +68,29 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 			L += def.Weight
 		}
 	}
-	pass := func(id, value string) {
+	record := func(id, status, value string) {
 		def, ok := e.cfg.Signals[id]
 		if !ok {
 			return
 		}
 		checks = append(checks, schema.Finding{
 			ID: id, Title: def.Title, Explanation: def.Explanation,
-			Status: "pass", Weight: 0, Value: value,
+			Status: status, Weight: 0, Value: value,
 		})
 	}
+	pass := func(id, value string) { record(id, "pass", value) }
+	// recordContra logs a contradiction rule that was evaluated and did NOT fire.
+	recordContra := func(id, status, value string) {
+		def, ok := e.cfg.Contradictions[id]
+		if !ok {
+			return
+		}
+		checks = append(checks, schema.Finding{
+			ID: id, Title: def.Title, Explanation: def.Explanation,
+			Status: status, Weight: 0, Value: value,
+		})
+	}
+	passContra := func(id, value string) { recordContra(id, "pass", value) }
 	fireContra := func(id, value string) {
 		def, ok := e.cfg.Contradictions[id]
 		if !ok {
@@ -104,12 +117,18 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 		}
 		if len(af.SeleniumAttributes) > 0 {
 			fire("selenium_attributes", strings.Join(af.SeleniumAttributes, ","))
+		} else {
+			pass("selenium_attributes", "none")
 		}
 		if hasAny(af.InjectedGlobals, "_phantom", "__phantom", "callPhantom", "__nightmare") {
 			fire("phantom_globals", strings.Join(af.InjectedGlobals, ","))
+		} else {
+			pass("phantom_globals", "none")
 		}
 		if len(af.PlaywrightBindings) > 0 {
 			fire("playwright_bindings", strings.Join(af.PlaywrightBindings, ","))
+		} else {
+			pass("playwright_bindings", "none")
 		}
 		if af.NavigatorWebdriver {
 			fire("navigator_webdriver", "true")
@@ -118,6 +137,8 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 		}
 		if len(af.NodeGlobals) > 0 {
 			fire("node_globals", strings.Join(af.NodeGlobals, ","))
+		} else {
+			pass("node_globals", "none")
 		}
 		if af.CdpRuntimeEnableLeak {
 			fire("cdp_runtime_enable", "true")
@@ -126,20 +147,32 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 		}
 		if af.AntiTamperPatched || af.WebdriverDescriptor == "patched-getter" || af.WebdriverDescriptor == "instance-override" {
 			fire("anti_tamper_patched", af.WebdriverDescriptor)
+		} else {
+			pass("anti_tamper_patched", "native")
 		}
 
 		h := l1.Headless
 		if h.UaHasHeadlessChrome {
 			fire("headless_ua", "HeadlessChrome")
+		} else {
+			pass("headless_ua", "no HeadlessChrome token")
 		}
 		if h.PermissionsContradiction {
 			fire("permissions_contradiction", "denied vs default")
+		} else {
+			pass("permissions_contradiction", "consistent")
 		}
 		if h.LanguagesEmpty {
 			fire("languages_empty", "empty")
+		} else {
+			pass("languages_empty", "present")
 		}
-		if h.PluginsLength == 0 && h.MimeTypesLength == 0 && isChromeUA(env(l1)) {
-			fire("no_plugins", "0/0")
+		if isChromeUA(env(l1)) {
+			if h.PluginsLength == 0 && h.MimeTypesLength == 0 {
+				fire("no_plugins", "0/0")
+			} else {
+				pass("no_plugins", itoa(h.PluginsLength)+"/"+itoa(h.MimeTypesLength))
+			}
 		}
 		if l1.WebGL.IsSoftware {
 			fire("software_webgl", l1.WebGL.UnmaskedRenderer)
@@ -148,33 +181,60 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 		}
 		if l1.Hardware.HardwareConcurrency == 0 || l1.Hardware.HardwareConcurrency == 1 || l1.Hardware.HardwareConcurrency > 128 {
 			fire("implausible_hardware", itoa(l1.Hardware.HardwareConcurrency))
+		} else {
+			pass("implausible_hardware", itoa(l1.Hardware.HardwareConcurrency)+" cores")
 		}
-		if l1.Canvas.Supported && l1.Canvas.Blocked {
-			fire("canvas_blocked", "blocked")
+		if l1.Canvas.Supported {
+			if l1.Canvas.Blocked {
+				fire("canvas_blocked", "blocked")
+			} else {
+				pass("canvas_blocked", "readable")
+			}
 		}
 		s := l1.Screen
-		if s.Width > 0 && (s.OuterWidth == 0 || s.OuterHeight == 0 || s.InnerWidth > s.Width) {
-			fire("impossible_geometry", "outer=0 or screen<inner")
+		if s.Width > 0 {
+			if s.OuterWidth == 0 || s.OuterHeight == 0 || s.InnerWidth > s.Width {
+				fire("impossible_geometry", "outer=0 or screen<inner")
+			} else {
+				pass("impossible_geometry", "consistent")
+			}
 		}
-		if !af.ChromeRuntimePresent && isChromeUA(env(l1)) {
-			fire("chrome_runtime_missing", "absent")
+		if isChromeUA(env(l1)) {
+			if !af.ChromeRuntimePresent {
+				fire("chrome_runtime_missing", "absent")
+			} else {
+				pass("chrome_runtime_missing", "present")
+			}
 		}
 	}
 
 	// ---- Layer 2 rules ----
 	if l2 := ss.Layer2; l2 != nil {
 		chromium := strings.Contains(l2.UserAgent, "Chrome/") || l2.SecChUa != ""
-		if chromium && l2.SecChUa == "" {
-			fire("missing_client_hints", "no Sec-CH-UA")
-		}
-		if chromium && l2.SecFetchMode == "" {
-			fire("missing_sec_fetch", "no Sec-Fetch-*")
+		if chromium {
+			if l2.SecChUa == "" {
+				fire("missing_client_hints", "no Sec-CH-UA")
+			} else {
+				pass("missing_client_hints", l2.SecChUa)
+			}
+			if l2.SecFetchMode == "" {
+				fire("missing_sec_fetch", "no Sec-Fetch-*")
+			} else {
+				pass("missing_sec_fetch", "mode="+l2.SecFetchMode)
+			}
 		}
 		if isMinimalAccept(l2.Accept) || isMinimalEncoding(l2.AcceptEncoding) {
 			fire("minimal_accept", l2.Accept+" | "+l2.AcceptEncoding)
+		} else {
+			pass("minimal_accept", "browser-like")
 		}
-		if strings.HasPrefix(l2.HeaderOrderMatch, "library:") {
+		switch {
+		case strings.HasPrefix(l2.HeaderOrderMatch, "library:"):
 			fireContra("header_order_is_library", l2.HeaderOrderMatch)
+		case l2.HeaderOrderMatch == "browser":
+			passContra("header_order_is_library", "browser-shaped order")
+		case l2.HeaderOrderMatch != "":
+			recordContra("header_order_is_library", "unavailable", l2.HeaderOrderMatch)
 		}
 	}
 
@@ -184,6 +244,8 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 			fire("ip_datacenter", "AS"+itoa(l3.ASN)+" "+l3.Org)
 		} else if l3.ASN != 0 {
 			pass("ip_datacenter", "AS"+itoa(l3.ASN)+" "+l3.Org)
+		} else {
+			record("ip_datacenter", "unavailable", "ASN unknown (no IP table loaded)")
 		}
 		// TLS stack vs UA vendor
 		ua := ""
@@ -193,8 +255,8 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 		claimsBrowser := strings.Contains(ua, "Chrome/") || strings.Contains(ua, "Firefox/") || strings.Contains(ua, "Safari/")
 		if l3.StackClass == "library" && claimsBrowser {
 			fireContra("tls_ua_vendor_mismatch", l3.MatchedStack+" vs "+shortUA(ua))
-		} else if l3.StackClass == "browser" {
-			pass("navigator_webdriver", "") // no-op guard; keeps engine tolerant
+		} else if claimsBrowser {
+			passContra("tls_ua_vendor_mismatch", l3.StackClass+" stack ("+l3.JA4+")")
 		}
 	}
 
@@ -232,6 +294,8 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 		}
 		if scripted {
 			fire("behavior_scripted", strings.Join(reasons, ","))
+		} else {
+			pass("behavior_scripted", "human-like typing")
 		}
 	}
 	if tr := ss.Traps; tr != nil {
@@ -244,9 +308,15 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 	if fn := ss.Funnel; fn != nil {
 		if !fn.ReachedInOrder {
 			fireContra("funnel_bypass", "reached out of order / deep-link")
+		} else if !fired["funnel_bypass"] {
+			passContra("funnel_bypass", "steps in order")
 		}
-		if len(fn.StepsSeen) >= 2 && !fn.CrossNavConsistent {
-			fireContra("cross_nav_inconsistency", "JA4/UA/IP changed between pages")
+		if len(fn.StepsSeen) >= 2 {
+			if !fn.CrossNavConsistent {
+				fireContra("cross_nav_inconsistency", "JA4/UA/IP changed between pages")
+			} else {
+				passContra("cross_nav_inconsistency", "stable JA4/UA/IP across pages")
+			}
 		}
 	}
 

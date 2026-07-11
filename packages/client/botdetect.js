@@ -277,6 +277,51 @@
   }
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
 
+  // ---------- debug sidebar (server-rendered; re-rendered here when new
+  // signals are posted mid-page, e.g. the passive Layer 1 snapshot on load) ----------
+  function renderSidebar(report) {
+    var el = document.querySelector("aside.bds-side");
+    if (!el || !report || !report.score) return;
+    var sc = report.score;
+    var color = { human: "#1a7f37", suspicious: "#bf8700", automated: "#cf222e" }[sc.band] || "#555";
+    var icon = { human: "✓", suspicious: "⚠", automated: "✗" }[sc.band] || "";
+    var h = "<h2>Live report — checks so far</h2>";
+    h += '<div class="bds-banner" style="border-color:' + color + '">';
+    h += '<div class="bds-pct" style="color:' + color + '">' + sc.percent + "%</div><div>";
+    h += '<div style="font-weight:700;color:' + color + '">' + icon + " " + esc(sc.band.toUpperCase()) + "</div>";
+    h += '<div class="bds-sub">automation probability ' + sc.percent + "% &middot; confidence " + Math.round(sc.confidence * 100) + "%";
+    if (sc.automationType && sc.automationType !== "none") h += " &middot; type: <code>" + esc(sc.automationType) + "</code>";
+    h += "</div></div></div>";
+    if (report.contradictions && report.contradictions.length) {
+      h += '<ul class="bds-contra">';
+      report.contradictions.forEach(function (c) {
+        h += '<li><b style="color:#cf222e">' + esc(c.title) + "</b> — " + esc(c.explanation);
+        if (c.value) h += ' <code style="font-size:.75rem">' + esc(c.value) + "</code>";
+        h += "</li>";
+      });
+      h += "</ul>";
+    }
+    h += '<table class="bds-checks">';
+    (report.checks || []).forEach(function (c) {
+      var badge = { pass: "PASS", warn: "WARN", fail: "FAIL", unavailable: "N/A" }[c.status] || c.status;
+      var col = { pass: "#1a7f37", warn: "#bf8700", fail: "#cf222e", unavailable: "#888" }[c.status] || "#555";
+      h += '<tr><td><span class="bds-badge" style="background:' + col + '">' + esc(badge) + "</span></td>";
+      h += "<td><b>" + esc(c.title) + '</b><br><span class="bds-exp">' + esc(c.explanation) + "</span></td>";
+      h += '<td class="bds-val">' + esc(c.value || "") + "</td></tr>";
+    });
+    h += "</table>";
+    var labels = [["layer2", "HTTP headers"], ["layer3Tls", "TLS fingerprint"], ["layer3Ip", "IP/ASN"],
+      ["layer1", "browser environment (JS)"], ["behavior", "behavior (scroll/click/typing)"]];
+    var captured = [], pending = [];
+    labels.forEach(function (l) {
+      ((report.coverage || {})[l[0]] === "captured" ? captured : pending).push(l[1]);
+    });
+    h += '<p class="bds-note">Captured so far: <b>' + captured.map(esc).join("</b>, <b>") + "</b>.";
+    if (pending.length) h += " Still to come: " + pending.map(esc).join(", ") + " — continue through the pages and this list grows.";
+    h += "</p>";
+    el.innerHTML = h;
+  }
+
   // ---------- drop-in autostart (docs/15) ----------
   function autostart(opts) {
     opts = opts || {};
@@ -314,13 +359,21 @@
           post("landing", { layer1: l1 }).then(function (rep) {
             if (!enforce(rep) && link) instrumentScrollAndLink(link, function () { return { layer1: passive }; });
           });
-        } else if (link) {
-          instrumentScrollAndLink(link, function () { return { layer1: passive }; });
+        } else {
+          // debug: post the passive environment snapshot right away so the
+          // sidebar grows with the no-interaction client checks on page 1
+          post("landing", { layer1: l1 }).then(renderSidebar);
+          if (link) instrumentScrollAndLink(link, function () { return { layer1: passive }; });
         }
       });
     } else if (BOOT.step === "form") {
       var passiveF = null;
-      collectPassive().then(function (l1) { passiveF = l1; });
+      collectPassive().then(function (l1) {
+        passiveF = l1;
+        // debug: refresh the sidebar with this page's snapshot (also covers
+        // deep-links to /debug/form where the landing post never happened)
+        if (BOOT.mode !== "test") post("form", { layer1: l1 }).then(renderSidebar);
+      });
       form = document.querySelector("form");
       if (form) {
         var flush = instrumentForm(form);
