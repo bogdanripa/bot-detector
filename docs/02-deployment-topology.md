@@ -1,151 +1,279 @@
-# 02 — Deploying the Honeypot
+# 02 — The Honeypot (a 3-step funnel)
 
-Concrete infrastructure for **the honeypot** — the deployable app that composes the
-detection libraries ([docs/13](13-libraries-and-packaging.md)) into the full
-three-layer, two-phase experience: **a single self-hosted Go server that
-terminates its own TLS and captures all three layers on one connection**. The old
-split-with-edge-probe design is kept only as a
-[serverless fallback appendix](#appendix--serverless-fallback-split-deployment).
+The honeypot is the deployable app that composes the detection libraries
+([docs/13](13-libraries-and-packaging.md)) into a realistic, instrumented
+**three-page funnel**. It is a **single self-hosted Go server that terminates its
+own TLS** ([docs/01](01-architecture-and-hosting.md)), so every page navigation is
+a fresh top-level request whose Layer 2/3 it captures directly.
 
-> The honeypot has **no detection logic of its own**. Its server imports
-> `go/tlscapture`, `go/httpcapture`, `go/ipasn`, and `go/engine`; its web app
-> imports `@botdetect/client`. This doc is about how it wires them together and the
-> infrastructure it runs on. A different consumer with a smaller capability set
-> (server-only, client-only, behind a proxy) uses the same libraries — see
+> The honeypot has **no detection logic of its own.** Its server imports
+> `go/tlscapture`, `go/httpcapture`, `go/ipasn`, and `go/engine`; its web pages
+> import `@botdetect/client`. This doc specifies the funnel and the infrastructure.
+> A different consumer with a smaller capability set uses the same libraries — see
 > [docs/13 §5](13-libraries-and-packaging.md#5-integration-recipes).
 
 ---
 
-## 1. The server (library composition)
+## 1. The funnel
 
-One Go binary composes the libraries and does everything:
+Three pages, each a real navigation, each instrumented server- and client-side:
 
 ```
-GET  /                → serves index.html (the instrumented form) + a bootstrap
-                        island containing the sessionId; captures this connection's
-                        Layer 2 + Layer 3 signals and stores them under sessionId
-GET  /app.js, /app.css, /static/*   → static assets (embed.FS)
-POST /api/analyze     → phase 1 (passive Layer 1) and phase 2 (form behavior);
-                        merges with stored connection signals, returns the report
-GET  /api/health      → liveness
-GET  /api/reference   → (optional) reference fingerprint DB for the UI's compare view
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │  PAGE 1  —  GET /            "Landing": some text + a link               │
+  │  server: capture connSignals #1 (TLS/JA4, header order, Sec-Fetch, IP)   │
+  │  client: @botdetect/client → passive Layer 1 + instrument the LINK       │
+  └───────────────┬────────────────────────────────────────────────────────┘
+                  │  user CLICKS the link  (a real, trusted, approached click)
+                  ▼
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │  PAGE 2  —  GET /step-2      "Form": name/email/topic/message + submit   │
+  │  server: capture connSignals #2  + verify the funnel transition          │
+  │  client: passive Layer 1 (again) + form behavior + honeypot traps (§8B)  │
+  └───────────────┬────────────────────────────────────────────────────────┘
+                  │  user FILLS + SUBMITS the form
+                  ▼
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │  PAGE 3  —  GET /result     "Report": verdict + probability + checklist   │
+  │  server: capture connSignals #3  + final aggregate score                 │
+  │  client: render the report (automationType, contradictions, per-check)   │
+  └────────────────────────────────────────────────────────────────────────┘
 ```
 
-Because the page, the assets, and the API are one origin on one server:
+Why a funnel beats a single page: it elicits **two natural interactions** (a link
+click, then a form fill) instead of an artificial "interact here" box, and it
+turns the **transitions between pages** into first-class detection signals (§3) —
+signals that only exist when detection spans multiple navigations.
 
-- the **navigation** to `GET /` is where we capture the client's true header
-  order and `Sec-Fetch-Mode: navigate`;
-- the same TLS handshake yields the ClientHello (JA3/JA4) and, if `h2` is
-  negotiated, the HTTP/2 fingerprint;
-- the socket `RemoteAddr` is the real client IP;
-- no cross-origin fetch, no nonce — a `sessionId` cookie/island ties the phases
-  together.
+### 1.1 Routes
 
-### 1.1 Connection-signal capture at `GET /`
+```
+GET  /                serves Page 1; captures connSignals #1; mints sessionId
+                      (Secure;HttpOnly;SameSite=Strict cookie + bootstrap island);
+                      issues a click-gated funnel token
+GET  /step-2          serves Page 2 (the form); captures connSignals #2; VERIFIES
+                      the transition (came from Page 1 via a real click, §3)
+GET  /result          serves Page 3 (the report); captures connSignals #3
+POST /api/analyze     receives per-step client signals { sessionId, step, ... };
+                      merges with the session's connSignals + funnel state; returns
+                      the running report
+POST /api/submit      the form submission (funnel + form-behavior checkpoint);
+                      303-redirects to /result
+GET  /app.js /app.css /static/*   assets (embed.FS)
+GET  /api/health      liveness
+```
 
-TLS/H2/header-order are properties of the **connection**, captured during the
-handshake and the first request. We stash them per-connection and join them to
-the HTTP request:
+`step ∈ { landing, form, result }`. Each page's client bundle collects and POSTs
+`/api/analyze` for its step; the engine aggregates across steps and `/result`
+renders the final report.
+
+---
+
+## 2. What each step captures (library wiring)
+
+Every navigation is captured **server-side** by the Go libraries; every page runs
+the **client** library. This is the "uses our libraries server- and client-side"
+requirement made concrete.
+
+### Page 1 — Landing (`GET /`)
+
+- **Server** (`tlscapture` + `httpcapture` + `ipasn`): capture `connSignals #1` —
+  JA3/JA4, HTTP/2 fingerprint, header **values + order**, `Sec-Fetch-*`
+  (`Sec-Fetch-Site: none` for a typed/bookmarked entry, or the referrer's site),
+  IP→ASN. Also check Web Bot Auth signature headers ([docs/14 §8](14-agentic-and-cdp-detection.md#8-signal-class-f--positive-agent-identification-web-bot-auth)).
+  Mint `sessionId`; store `connSignals #1` under it; issue a **funnel token** the
+  link will carry (§4).
+- **Client** (`@botdetect/client`): `collectPassive()` (Layer 1), and
+  **instrument the link** — record the input provenance of the click
+  ([docs/14 §4](14-agentic-and-cdp-detection.md#4-signal-class-b--input-provenance-catches-os-level-agents-)):
+  approach trail, `isTrusted`, coalesced samples, landing offset, and the dwell
+  before clicking. POST `/api/analyze { step: 'landing', layer1, linkClick }`.
+
+### Page 2 — Form (`GET /step-2`)
+
+- **Server**: capture `connSignals #2` and **verify the transition** (§3): valid
+  session, arrived from Page 1 (`Referer: /`, `Sec-Fetch-Site: same-origin`,
+  `Sec-Fetch-User: ?1`), and a **click-activated** funnel token. Compare
+  `connSignals #2` to `#1` for cross-navigation consistency (§3.4).
+- **Client**: `collectPassive()` again (Layer-1 consistency across pages),
+  `instrumentForm()` + the CDP-leak / cadence / biometrics collectors, and render
+  the **active honeypot traps** ([docs/14 §8B](14-agentic-and-cdp-detection.md#8b-active-honeypot-probes--dom-agent-vs-vision-agent-traps)):
+  a DOM honeypot field, a vision trap, a smooth-pursuit target. POST
+  `/api/analyze { step: 'form', layer1, behavior, traps }`, and `POST /api/submit`
+  on submit.
+
+### Page 3 — Result (`GET /result`)
+
+- **Server**: capture `connSignals #3`; run the final aggregate score over all
+  steps (`engine.Score`); render the report into the page (or serve it for the
+  client to render).
+- **Client**: render banner + `automationType` + contradictions + the per-check
+  list ([docs/08](08-frontend-ui.md)); offer "copy JSON" and "re-run" (which
+  returns to `/`).
+
+---
+
+## 3. Funnel-integrity signals (the new detection value)
+
+A multi-page funnel exposes signals a single page cannot. These are checked
+server-side across the three navigations and fed to the engine.
+
+### 3.1 Step ordering / deep-linking
+
+Real users traverse `/` → `/step-2` → `/result` **in order**. A request to
+`/step-2` or `/result` with **no prior step recorded for the session** means the
+client **jumped straight to a deep URL** — typical of crawlers and DOM agents that
+enumerate links, or an agent told "go to the form." Strong `funnel_bypass` signal.
+
+### 3.2 The click that produced Page 2
+
+The navigation to `/step-2` should be the result of a **real click on Page 1's
+link**:
+
+- `Sec-Fetch-User: ?1` (the navigation was **user-activated**) and
+  `Sec-Fetch-Site: same-origin`, `Sec-Fetch-Dest: document`;
+- `Referer: https://app.example.com/`;
+- a **click-activated funnel token** (§4) — proof a *trusted, approached* click
+  occurred, not a programmatic `location = '/step-2'` or a direct GET.
+
+Missing `Sec-Fetch-User`, absent Referer, or an un-activated token ⇒ the link was
+**not clicked by a human** (direct navigation / synthetic click). This is the
+funnel's version of "did a real hand click the link, or did the agent navigate to
+the URL?" — and it's one of the cleanest agent tells available.
+
+### 3.3 Cross-page timing
+
+- **Dwell on Page 1** before clicking (a human reads the text; sub-second dwell ⇒
+  didn't read).
+- **Time-to-first-interaction** on Page 2; **fill→submit** duration.
+- **Total funnel time** — faster than a human could plausibly read + click + fill
+  ⇒ automated, independent of how polished the input looks.
+
+### 3.4 Cross-navigation fingerprint consistency ⭐ (new contradiction)
+
+`connSignals #1`, `#2`, and `#3` should be **identical** for a genuine single
+client: same **JA4**, same **User-Agent**, same **IP/ASN**, consistent Layer-1
+(navigator/WebGL/fonts) across page loads. A change mid-funnel is a strong
+`cross_nav_inconsistency` contradiction:
+
+- **JA4 flips** between pages ⇒ a different TLS stack served different steps (e.g.
+  one tool renders Page 1, another fetches Page 2).
+- **UA or Layer-1 changes** ⇒ different client per step / session replay.
+- **IP hops** across steps ⇒ proxy rotation mid-funnel.
+
+A real browser produces one coherent client across all three navigations;
+a multi-tool automation pipeline (a common agent/scraper pattern — one component
+follows links, another submits) betrays itself here.
+
+### 3.5 Referer & navigation-type continuity
+
+`/result`'s Referer should be `/step-2`; its navigation should follow the form
+submission, not a direct GET. Each hop's `Sec-Fetch-*` should match a genuine
+same-origin document navigation.
+
+> **Scoring.** These funnel signals become engine contributions and two new
+> contradictions — `funnel_bypass` and `cross_nav_inconsistency` — added in
+> [docs/07 §3](07-coherence-engine.md#3-contradiction-rules-the-high-weight-core).
+> As always they inform the probability and `automationType`; the honeypot reports,
+> it does not block.
+
+---
+
+## 4. The click-gated funnel token
+
+Ties the three pages together with proof of a **real** Page-1 link click, directly
+implementing the gesture-gated token from
+[docs/14 §8B](14-agentic-and-cdp-detection.md#8b-active-honeypot-probes--dom-agent-vs-vision-agent-traps):
+
+```
+1. GET /  → server issues token T (bound to sessionId), embeds it inert in the page.
+2. The link's href does NOT initially carry a valid T. On a TRUSTED click
+   (isTrusted, real approach trail, coalesced samples), the client activates T —
+   e.g. POST /api/analyze { step:'landing', linkClick } returns an activated T,
+   or the client rewrites the href to include T at click-time from the gesture handler.
+3. GET /step-2 must present an ACTIVATED T. 
+      - activated  ⇒ a real human click produced this navigation.
+      - absent / un-activated ⇒ direct navigation or synthetic click ⇒ funnel_bypass.
+```
+
+The token is single-use and session-bound (TTL ~10 min). It is a *signal input*,
+not a hard gate — an un-activated token lowers the human probability and flips
+`automationType` toward agentic; it does not 403 the request (the honeypot reports,
+it does not enforce).
+
+---
+
+## 5. Session & connection capture (server internals)
+
+TLS/H2/header-order are properties of the **connection**; we capture them per
+navigation and bind them to the session per step.
 
 ```go
-// One store: sessionId -> connectionSignals (TTL ~10 min).
-// TLS captured in GetConfigForClient; H2 + header order captured by reading
-// frames/raw bytes; all keyed by the connection's remote addr, then bound to
-// the sessionId minted when GET / is served.
+// One store: sessionId -> { connSignals[step], funnelState, runningReport }  (TTL ~10 min).
+// tlscapture computes JA3/JA4 in GetConfigForClient (keyed by conn RemoteAddr);
+// httpcapture reads header values+order from the raw navigation;
+// each GET handler binds the current connection's signals to the session under its step.
 srv := &http.Server{
     Addr:      ":443",
-    TLSConfig: tlsCfg,                // GetConfigForClient computes JA3/JA4, stores by RemoteAddr
+    TLSConfig: lc.InstrumentConfig(baseTLSConfig),   // go/tlscapture
     ConnContext: func(ctx context.Context, c net.Conn) context.Context {
         return context.WithValue(ctx, connKey, c.RemoteAddr())
     },
-    Handler: router,                  // GET / mints sessionId, binds connSignals[remoteAddr] -> session
+    Handler: router,   // GET / , /step-2 , /result each capture connSignals[step]
 }
-log.Fatal(srv.ListenAndServeTLS("", "")) // certs via autocert
+log.Fatal(srv.ListenAndServeTLS("", ""))             // certs via autocert
 ```
 
-> **HTTP-keepalive / H2 multiplexing note.** The phase-1/phase-2 `POST
-> /api/analyze` calls may reuse the same TLS connection as the navigation (so same
-> JA4) or open a new one. Either way we bind Layer 2/3 to the session at the
-> **navigation** (`GET /`), because that's the request with true browser
-> header-order and navigation `Sec-Fetch-*` semantics. The API POSTs are `fetch`
-> requests and carry `Sec-Fetch-Mode: cors`/`same-origin`, which we record
-> separately (a POST that *doesn't* look same-origin is itself a signal — the
+> **Keepalive / H2 note.** The `POST /api/analyze` calls are `fetch` requests
+> (`Sec-Fetch-Mode: cors`/`same-origin`) and may reuse or reopen the TLS
+> connection. We bind Layer 2/3 to each **navigation** (the `GET` of each page),
+> because those carry true browser header-order and document `Sec-Fetch-*`
+> semantics. An analyze POST that doesn't look same-origin is itself recorded (the
 > payload may have been replayed outside the page).
 
-### 1.2 Host configuration
+---
+
+## 6. Host configuration
 
 | Setting | Value | Reason |
 |---------|-------|--------|
 | Host | Compute Engine VM (e2-small) or a VPS with a static IP | Need a raw :443 socket and our own cert. |
 | TLS | `autocert` (Let's Encrypt) in-process | Our process runs the handshake — required for Layer 3. |
-| Process mgmt | `systemd` unit (or a container on the VM) with auto-restart | Single always-on service. |
-| Ports | 443 (HTTPS), 80 (ACME challenge + redirect) | autocert HTTP-01, plus redirect to HTTPS. |
+| Process mgmt | `systemd` unit (or a container) with auto-restart | Single always-on service. |
+| Ports | 443 (HTTPS), 80 (ACME challenge + 301 redirect) | autocert HTTP-01, redirect to HTTPS. |
 | Firewall | 80/443 in; deny the rest | Minimal surface. |
-| Scaling | Vertical first; one box handles diagnostic volume. For horizontal, move the session store to Redis and front with an **L4 (TCP passthrough)** LB — never L7, which would re-terminate TLS. | Preserve the socket. |
-| Logs/metrics | Structured logs, anonymized IPs; Prometheus/OpenTelemetry | See [docs/10](10-privacy-security.md). |
+| Scaling | Vertical first. For horizontal, move the session store to Redis and front with an **L4 (TCP passthrough)** LB — never L7, which re-terminates TLS. | Preserve the socket. |
+| Logs/metrics | Structured logs, anonymized IPs; funnel completion/bypass rate | See [docs/10](10-privacy-security.md). |
 
-### 1.3 Header hygiene
-
-Even self-hosted, filter hop-by-hop and any proxy headers before analysis, and
-keep an allow-list of the headers we actually score (see
-[docs/05](05-layer2-http.md)). If you ever front the box with an L4 proxy that
-adds `PROXY protocol` or a single trusted `X-Forwarded-For`, parse the real client
-IP from that one trusted hop; otherwise use `RemoteAddr`.
+Header hygiene: filter hop-by-hop/proxy headers before analysis; if an L4 proxy
+fronts the box, honor `PROXY protocol` or one trusted `X-Forwarded-For` hop,
+else use `RemoteAddr`.
 
 ---
 
-## 2. The two-phase API flow
-
-```
-1. Browser GET app.example.com/  (navigation)
-     → server captures connSignals (TLS/JA4, H2, header order, IP/ASN),
-       mints sessionId, stores connSignals under it (TTL 10m),
-       serves index.html with <script id="bootstrap">{ "sessionId": "…" }</script>
-       and sets a Secure;HttpOnly;SameSite=Strict cookie with the same id.
-
-2. app.js runs on load:
-     - collects passive Layer 1
-     - POST /api/analyze { reportVersion, sessionId, phase: 1, layer1 }
-     - server merges connSignals + layer1, scores, returns report@phase1
-     - UI renders banner + probability + checklist immediately
-
-3. User interacts with the on-page form; app.js records interaction dynamics.
-   On submit (or after N seconds of interaction):
-     - POST /api/analyze { reportVersion, sessionId, phase: 2, behavior }
-     - server merges behavior into the session's signals, RE-scores,
-       returns report@phase2 (higher confidence)
-     - UI updates banner + probability + checklist in place, marking which
-       checks changed
-```
-
-The server keeps the phase-1 result in the session so phase 2 is a delta re-score,
-not a full re-collect. See [docs/03](03-api-contract.md) for the exact schemas.
-
----
-
-## 3. TLS & DNS
+## 7. TLS & DNS
 
 ```
 app.example.com  →  A/AAAA to the server's static IP  (autocert / Let's Encrypt)
 ```
 
-- One domain, one origin. HTTPS via in-process autocert; port 80 serves the
-  ACME HTTP-01 challenge and 301-redirects everything else to HTTPS.
-- No CDN, no managed LB with TLS, no Cloudflare orange-cloud — any of those
-  re-terminate TLS and destroy Layer 3.
+One domain, one origin, all three pages same-origin (so the funnel transitions are
+`same-origin` navigations). HTTPS via in-process autocert; port 80 serves the ACME
+challenge and 301-redirects to HTTPS. **No CDN, no managed L7 LB, no Cloudflare
+orange-cloud** — any of those re-terminate TLS and destroy Layer 3.
 
 ---
 
-## 4. Local development
+## 8. Local development
 
-- A single `make dev` runs the server with a locally-trusted cert via `mkcert`
-  on `app.localtest.me`, so TLS termination (and thus Layer 3 capture) works
-  locally exactly as in prod.
-- Drive it with real Chrome and with headless Playwright (Chromium is at
-  `/opt/pw-browsers/chromium`) to see both ends of the score.
-- `Makefile` targets: `make dev`, `make test`, `make build`, `make deploy`
-  (rsync/scp the binary + `systemctl restart`), `make capture` (dump raw
-  fixtures for the reference DB — see [docs/11 §3](11-testing.md#3-capturing-fixtures-how-to-build-the-golden-set)).
+- `make dev` runs the server with a `mkcert` cert on `app.localtest.me`, so TLS
+  termination (and Layer 3 capture) works locally exactly as in prod.
+- Drive the full funnel with real Chrome and with headless Playwright (Chromium at
+  `/opt/pw-browsers/chromium`) — and with an agent that **deep-links** straight to
+  `/step-2` to exercise `funnel_bypass`.
+- `Makefile`: `make dev`, `make test`, `make build`, `make deploy`
+  (rsync the binary + `systemctl restart`), `make capture` (dump raw fixtures —
+  [docs/11 §3](11-testing.md#3-capturing-fixtures-how-to-build-the-golden-set)).
 
 ---
 
@@ -159,21 +287,9 @@ The problem: a managed platform terminates TLS at the GFE (see
 [docs/01 §2](01-architecture-and-hosting.md#2-why-we-do-not-deploy-on-a-google-cloud-function)),
 so the function can't see Layer 3. The workaround: keep the app on the managed
 platform and add **one small raw-socket "edge probe"** on a separate subdomain
-(`tls.example.com`) that terminates its own TLS. The browser makes an extra
-cross-origin `fetch` to the probe; the probe captures JA3/JA4 + H2 + header order
-of *that* connection and returns them keyed by a single-use, 60-second
-**correlation nonce** the app minted. The app fetches the probe's result
-server-to-server and merges it.
-
-Trade-offs versus self-hosting:
-
-- adds a second host, a nonce store, CORS, and same-client verification (compare
-  probe IP/UA to the app's) — all of which self-hosting eliminates;
-- the transport signals describe a `fetch` connection, not the navigation, so
-  their Layer-2 context differs and must be labeled;
-- if the probe is blocked/unreachable, Layer 3 degrades to unavailable.
-
-If you must build this, the mechanics (nonce lifecycle, store options, CORS,
-failure modes) are straightforward re-additions, but every one of them exists
-*only* to compensate for not owning the socket. The recommendation stands: own
-the socket instead.
+that terminates its own TLS; the browser makes an extra cross-origin `fetch` to it,
+and the probe returns JA3/JA4 + H2 + header order keyed by a single-use nonce the
+app minted. Trade-offs: a second host, a nonce store, CORS, and same-client
+verification — all of which self-hosting eliminates; and the transport signals then
+describe a `fetch` connection, not a navigation. Every part of this exists *only*
+to compensate for not owning the socket. The recommendation stands: own the socket.

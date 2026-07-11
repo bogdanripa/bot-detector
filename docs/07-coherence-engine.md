@@ -150,7 +150,9 @@ They're surfaced separately in the report and also feed the log-odds sum.
 | `tls_ua_vendor_mismatch` | JA4/JA3 stack ≠ UA vendor (TLS=Go/Python/curl, UA=Chrome) | **+5.5** | A real Chrome cannot emit a Go ClientHello. The strongest single contradiction. |
 | `header_order_is_library` | Header order matches curl/requests/Go under a browser UA | +3.0 | The client is an HTTP library wearing a browser UA. |
 | `h2_ua_vendor_mismatch` | H2 fingerprint stack ≠ UA vendor | +2.8 | Independent corroboration of the TLS mismatch. |
+| `cross_nav_inconsistency` | JA4 / UA / IP / Layer-1 **changes between the funnel's page navigations** (docs/02 §3.4) | +3.0 | One human on one browser produces one coherent client across all 3 pages; a change mid-funnel = a multi-tool pipeline (one component follows links, another submits). |
 | `os_triangulation_mismatch` | ≥2 of {`Sec-CH-UA-Platform`, WebGL renderer OS, font-set OS} disagree | +2.4 | A genuine OS tells one consistent story across all three. |
+| `funnel_bypass` | Reached `/step-2` or `/result` **out of order / by deep-link**, or the Page-2 navigation lacked a trusted click (`Sec-Fetch-User`/Referer/activated token) (docs/02 §3.1–3.2) | +2.6 | A human traverses the funnel in order via real clicks; jumping straight to the form/result URL or navigating without a click is a crawler/agent pattern. |
 | `ua_js_vs_header_mismatch` | `navigator.userAgent` (JS) ≠ `User-Agent` header | +2.4 | Different UA to JS vs. the wire = injected/spoofed UA. |
 | `permissions_contradiction` | Permissions API state impossible vs. `Notification.permission` | +2.2 | Classic headless artifact. |
 | `mobile_desktop_contradiction` | UA says mobile but screen/touch/pointer/hints say desktop (or vice versa) | +2.0 | Anti-detect browsers commonly get this pair wrong. |

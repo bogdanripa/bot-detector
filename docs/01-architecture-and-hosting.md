@@ -110,57 +110,47 @@ Terminate TLS in your Go process with `golang.org/x/crypto/acme/autocert`
 
 ---
 
-## 4. The two-phase detection flow
+## 4. The detection flow (a 3-step funnel)
 
-The homepage is **an instrumented form** — a deliberate interaction surface. The
-app detects in two phases so it can report immediately and then refine as the
-visitor actually uses the form.
+The honeypot is **a three-page funnel** — a landing page with a link, a form page,
+and a report page ([docs/02](02-deployment-topology.md)). Each page is a real
+navigation the server re-captures, so detection spans three connections and two
+natural interactions (a link click, then a form fill).
 
 ```
-1. GET /  (a real top-level navigation)
-     Server captures, for THIS connection: TLS/JA4, HTTP2 fingerprint,
-     header values + order, IP/ASN. Stores them keyed to a fresh sessionId,
-     which it embeds in the page. (Sec-Fetch-Mode: navigate here — the honest
-     navigation semantics we want for Layer 2.)
-
-2. PHASE 1 — on load (passive):
-     Client collects passive Layer-1 signals (navigator, WebGL, canvas, audio,
-     screen, fonts, locale, automation flags) and POSTs
-     /api/analyze { sessionId, phase: 1, layer1 }.
-     Server joins them with the stored connection signals, runs the scoring
-     engine, and returns the INITIAL report: automation probability + banner +
-     full checklist. The UI renders the green/red banner right away.
-
-3. PHASE 2 — after the user fills the form (behavioral):
-     The client instruments the form and streams interaction dynamics — typing
-     cadence & variance, mouse path into each field, focus/tab order, paste vs
-     type, backspace/correction rate, per-field dwell time, and fill→submit
-     latency. On submit it POSTs /api/analyze { sessionId, phase: 2, behavior }.
-     Server merges the behavioral signals, RE-SCORES, and returns the refined
-     report. The banner, probability, and checklist update in place.
+PAGE 1  GET /        Landing (text + a link).
+     Server captures connSignals #1 (TLS/JA4, HTTP2, header values+order, IP/ASN)
+     for THIS navigation; mints a sessionId + a click-gated funnel token.
+     Client: passive Layer 1 + instrument the LINK (the click's input provenance).
+        ↓ a real, trusted, approached click on the link
+PAGE 2  GET /step-2  Form (name/email/topic/message + submit; + honeypot traps).
+     Server captures connSignals #2; VERIFIES the transition (real click? same
+     client as #1?). Client: passive Layer 1 again + form behavior + trap outcomes.
+        ↓ fill + submit
+PAGE 3  GET /result  Report: verdict + automationType + full checklist,
+     aggregated across all three steps.
 ```
 
-### 4.1 Why two phases
+### 4.1 Why a funnel
 
-- **Instant feedback:** the visitor sees a verdict on load, before touching
-  anything — the strongest tells (TLS≠UA, `webdriver`, headless) don't need
-  interaction.
-- **Behavioral lift:** *how* a form is filled is a large, hard-to-fake signal
-  class. A script that fills every field in 40ms with zero mouse movement, tab
-  order it never used, and no corrections looks nothing like a human. This can
-  only be measured *after* interaction, so it's a second phase that tightens the
-  estimate and raises confidence.
-- **Confidence, not just score:** Phase 1 yields a probability at "passive"
-  confidence; Phase 2 raises confidence because we now have behavioral
-  corroboration (or contradiction).
+- **Two natural interactions.** A link click and a form fill give real behavioral
+  and input-provenance signal, without an artificial "interact here" box.
+- **Transitions are signals.** Whether Page 2 was reached by a *real click*
+  (`Sec-Fetch-User`, Referer, an activated token) vs. a **deep-link to the form
+  URL**, and whether the **JA4/UA/IP are identical across all three navigations**,
+  are among the cleanest agent/scraper tells — and they only exist across pages
+  ([docs/02 §3](02-deployment-topology.md#3-funnel-integrity-signals-the-new-detection-value)).
+- **Confidence builds across steps.** Passive Layer 1 + Layer 2/3 land the estimate
+  early; the click, the form behavior, the traps, and the cross-navigation
+  consistency tighten it by Page 3.
 
 ### 4.2 Session correlation (same origin, no nonce)
 
-Because everything is one origin on one server, correlation is trivial: a
-`sessionId` (also mirrored in a `Secure; HttpOnly; SameSite=Strict` cookie) ties
-the page-load connection capture to the phase-1 and phase-2 POSTs. Connection
-signals are captured at `GET /` (the real navigation) and stored server-side with
-a short TTL (e.g. 10 min). No cross-origin machinery.
+Everything is one origin on one server, so correlation is trivial: a `sessionId`
+(mirrored in a `Secure; HttpOnly; SameSite=Strict` cookie) ties the three
+navigations' connection captures and the per-step `/api/analyze` POSTs together.
+Connection signals are captured at each `GET` (the real navigations) and stored
+server-side per step with a short TTL (~10 min). No cross-origin machinery.
 
 ---
 

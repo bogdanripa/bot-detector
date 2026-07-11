@@ -44,13 +44,17 @@ browser"). These have their own expected `automationType` and are specified in
 They are the modern frontier and the reason for the input-provenance / cadence /
 CDP-leak collectors.
 
-**Phase rows** — for a subset, assert the **two-phase** behavior: the phase-1
-report lands the right band from passive signals, and phase 2 either raises
-confidence (real human filling the form naturally) or adds a behavioral `fail`
-(scripted form fill). Assert that a clean phase-1 human is *not* flipped to
-`automated` by behavior alone (the bounded/gated behavior group,
-[docs/07 §2.6](07-coherence-engine.md#26-form-behavior-layer-1-phase-2-bounded)),
-and that autofill/password-manager fills are not penalized.
+**Funnel rows** — for a subset, traverse the full **3-step funnel** (docs/02) and
+assert: the passive signals land the right band early; a real click on Page 1
+activates the funnel token; the form-behavior step either raises confidence (natural
+human fill) or adds a behavioral `fail` (scripted fill); a clean human is *not*
+flipped to `automated` by behavior alone (the bounded/gated group,
+[docs/07 §2.6](07-coherence-engine.md#26-form-behavior-layer-1-phase-2-bounded));
+and autofill/password-manager fills are not penalized. Add explicit
+**funnel-integrity** cases: a client that **deep-links to `/step-2`** trips
+`funnel_bypass`; a run whose **JA4/UA/IP changes between navigations** trips
+`cross_nav_inconsistency`; a Page-2 navigation with **no trusted click** (no
+`Sec-Fetch-User`/token) is flagged.
 
 ### Acceptance criteria (bands map to the probability, [docs/07 §4.1](07-coherence-engine.md#41-from-probability-to-band))
 
@@ -106,12 +110,13 @@ means most coverage lives in the libraries; the honeypot gets only a thin e2e.
 ### 2.3 Integration / e2e
 
 - Run the self-hosted server locally with a `mkcert` cert (`make dev`), drive real
-  Chrome and headless Playwright against it with Playwright, and assert the
-  rendered verdict for both phases.
-- Test the **two-phase and degradation paths**: assert phase 1 renders before any
-  interaction; assert phase 2 updates the banner after a form fill; expire the
-  session → assert the `session_expired` handling; disable WebGL → assert that
-  check renders `unavailable` without breaking the score.
+  Chrome and headless Playwright through the **full funnel** (`/` → click →
+  `/step-2` → fill → `/result`) with Playwright, and assert the Page-3 verdict.
+- Test the **funnel and degradation paths**: a real click on Page 1 activates the
+  token and reaches Page 2 cleanly; a Playwright run that **`goto('/step-2')`
+  directly** trips `funnel_bypass`; expire the session → assert `session_expired`
+  handling; disable WebGL → assert that check renders `unavailable` without
+  breaking the score.
 
 ### 2.4 Contract tests
 
@@ -172,7 +177,8 @@ The tool is working when:
 3. The **stealth headless on CI** case (15) is caught as at least `suspicious`
    **by a contradiction**, not by any single flag it patched — this is the whole
    thesis of the tool and the most important test.
-4. The **two-phase flow** works: phase 1 lands the band immediately, phase 2
-   refines it, and behavior alone never flips a clean human to `automated`.
+4. The **funnel** works end to end: passive signals land the band early, the click
+   + form + cross-navigation evidence refine it by Page 3, behavior alone never
+   flips a clean human to `automated`, and a deep-link/bypass is caught.
 5. The honest-limit case (16) is reported as clean *with the stated caveat*, and
    the headline automation probability is well-calibrated across the matrix.

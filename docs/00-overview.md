@@ -2,9 +2,10 @@
 
 ## 1. What we are building
 
-A single-page diagnostic web app. A visitor loads it in whatever client they
-like (a real browser, a headless browser, a stealth-patched automation stack, or
-a raw HTTP client), interacts with an on-page form, and the app returns a
+A diagnostic web app, structured as a short **three-page funnel** (landing → form →
+report). A visitor loads it in whatever client they like (a real browser, a
+headless browser, a stealth-patched automation stack, or a raw HTTP client), clicks
+through to a form, fills it in, and the app returns a
 structured report of every signal a production anti-bot system would evaluate,
 together with:
 
@@ -19,10 +20,12 @@ together with:
 - a **confidence** figure — how much evidence backs the estimate, distinct from
   the probability itself.
 
-Detection runs in **two phases**: a passive pass on load (server + client) that
-lands the banner immediately, then a client-only **form-behavior** pass that
-refines the estimate based on *how* the visitor filled the form. See
-[docs/01 §4](01-architecture-and-hosting.md#4-the-two-phase-detection-flow).
+Detection runs as a **three-page funnel**: a landing page with a link, a form
+page, and a report page. Each page is a real navigation the server re-captures, and
+the transitions between them (was the link *really clicked*? same JA4/IP across
+all three hops?) are themselves signals. See
+[docs/01 §4](01-architecture-and-hosting.md#4-the-detection-flow-a-3-step-funnel)
+and [docs/02](02-deployment-topology.md).
 
 The differentiator versus existing tools (`bot.sannysoft.com`, `browserleaks.com`,
 `pixelscan`, `creepjs`) is not any single novel check — it is the explicit

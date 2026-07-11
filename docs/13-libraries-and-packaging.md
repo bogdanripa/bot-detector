@@ -358,4 +358,4 @@ Nothing in the detection design changes — this is a *packaging* reframe:
 
 The honeypot ([docs/02](02-deployment-topology.md) + [docs/08](08-frontend-ui.md))
 is the reference integration that proves the libraries compose into the full
-three-layer, two-phase experience.
+three-layer, three-step-funnel experience.

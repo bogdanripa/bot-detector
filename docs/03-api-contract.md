@@ -3,19 +3,20 @@
 > **This is the spec for the `@botdetect/schema` / `go/schema` library**
 > ([docs/13 §3.6](13-libraries-and-packaging.md#36-botdetectschema--goschema--the-wire-contract)).
 > The shapes below are defined once as JSON Schema and code-generated into TS types
-> and Go structs, so the client lib and the engine can't drift. The two-phase HTTP
-> flow described here is the **honeypot's** integration; a different consumer may
+> and Go structs, so the client lib and the engine can't drift. The three-step
+> funnel described here is the **honeypot's** integration; a different consumer may
 > move these same payloads over its own transport — the schema is the contract, the
-> endpoints are the honeypot's choice.
+> endpoints and page flow are the honeypot's choice.
 
 Stable, versioned contract between the client library and the engine. All bodies
 are JSON, UTF-8. The report schema is versioned via `reportVersion` so the "copy
 JSON" output stays parseable as checks evolve.
 
-The flow is **two-phase** on one origin (see
-[docs/02 §2](02-deployment-topology.md#2-the-two-phase-api-flow)): the server
-captures connection-level Layer 2/3 at the page navigation, then `/api/analyze` is
-called once for phase 1 (passive Layer 1) and once for phase 2 (form behavior).
+The flow is a **three-step funnel** on one origin (see
+[docs/02](02-deployment-topology.md)): the server captures connection-level Layer
+2/3 at **each** page navigation (`/`, `/step-2`, `/result`), and the client calls
+`/api/analyze` once **per step** (`landing`, `form`, `result`). The engine
+aggregates across steps; `/result` renders the final report.
 
 ---
 
@@ -23,38 +24,48 @@ called once for phase 1 (passive Layer 1) and once for phase 2 (form behavior).
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/` | Serve the instrumented-form SPA + bootstrap `sessionId`; capture this connection's Layer 2/3 |
+| `GET` | `/` | **Page 1** (landing: text + link); capture connSignals #1; mint `sessionId` + funnel token |
+| `GET` | `/step-2` | **Page 2** (the form); capture connSignals #2; verify the funnel transition |
+| `GET` | `/result` | **Page 3** (the report); capture connSignals #3; final aggregate score |
+| `POST` | `/api/analyze` | Per-step client signals (`landing`/`form`/`result`); merges with session + funnel state; returns the running report |
+| `POST` | `/api/submit` | Form submission checkpoint; 303 → `/result` |
 | `GET` | `/app.js`, `/app.css` | Static assets |
-| `POST` | `/api/analyze` | Phase 1 (passive) or phase 2 (behavior); returns the scored report |
 | `GET` | `/api/health` | Liveness |
 | `GET` | `/api/reference` | (optional) reference fingerprint DB for the UI |
 
-The connection-level Layer 2/3 signals are **not** a client-facing endpoint —
-they're captured server-side at `GET /` and joined to the session. The client
-never sends them (it can't see them).
+The connection-level Layer 2/3 signals and the funnel-integrity signals are
+captured **server-side at each navigation** and joined to the session by step. The
+client never sends them (it can't see them).
 
 ---
 
-## 2. Bootstrap (in the `GET /` HTML)
+## 2. Bootstrap (in each page's HTML)
 
 ```html
 <script type="application/json" id="bootstrap">
-{ "reportVersion": "1", "sessionId": "6f1c…-uuid", "captureMode": "self-hosted" }
+{ "reportVersion": "1", "sessionId": "6f1c…-uuid", "step": "landing",
+  "funnelToken": "…inert until a trusted click activates it…", "captureMode": "self-hosted" }
 </script>
 ```
 
-A matching `sessionId` is also set as `Secure; HttpOnly; SameSite=Strict` cookie.
+A matching `sessionId` is also set as a `Secure; HttpOnly; SameSite=Strict` cookie.
+Each page carries its own `step`; Page 1 also carries the click-gated `funnelToken`
+([docs/02 §4](02-deployment-topology.md#4-the-click-gated-funnel-token)).
 
 ---
 
-## 3. `POST /api/analyze` — phase 1 (passive, on load)
+## 3. `POST /api/analyze` — step `landing` (Page 1: passive + link click)
 
 ```jsonc
 {
   "reportVersion": "1",
   "sessionId": "6f1c…-uuid",
-  "phase": 1,
+  "step": "landing",
   "collectedAtMs": 1731000000000,     // client clock; display-only, never trusted
+  "linkClick": {                      // input-provenance of the Page-1 link click (docs/14 §4)
+    "occurred": true, "isTrusted": true, "approachPoints": 37, "coalescedNearby": 21,
+    "atExactIntegerCenter": false, "dwellBeforeClickMs": 2400, "sourceCapabilitiesPresent": true
+  },
   "layer1": {
     "automationFlags": {
       "navigatorWebdriver": false,
@@ -94,16 +105,24 @@ against the server-captured Layer 2/3 — never trusted as ground truth.
 
 ---
 
-## 4. `POST /api/analyze` — phase 2 (form behavior, after interaction)
+## 4. `POST /api/analyze` — step `form` (Page 2: form behavior + traps)
 
-Sent on form submit (or after a threshold of interaction). Carries only
-interaction **dynamics** — never field **contents**.
+Sent from Page 2 on form submit (or after a threshold of interaction). Carries only
+interaction **dynamics** — never field **contents** — plus the honeypot-trap
+outcomes.
 
 ```jsonc
 {
   "reportVersion": "1",
   "sessionId": "6f1c…-uuid",
-  "phase": 2,
+  "step": "form",
+  "traps": {                          // active honeypot outcomes (docs/14 §8B)
+    "domHoneypotFilled": false,       // a hidden-in-DOM field got a value ⇒ DOM/CDP agent
+    "visionTrapTripped": false,       // clicked a visual-only affordance ⇒ vision agent
+    "smoothPursuitTracked": true,     // followed a continuously-moving target (human/real cursor)
+    "gestureTokenActivated": true,    // a trusted gesture produced the token
+    "fillFasterThanHumanlyPossible": false
+  },
   "behavior": {
     "durationMs": 8400,
     "form": {
@@ -138,21 +157,29 @@ interaction **dynamics** — never field **contents**.
 
 ---
 
-## 5. Response — the report (returned from both phases)
+## 5. Response — the report (returned from each step)
 
 ```jsonc
 {
   "reportVersion": "1",
-  "phase": 2,                          // which phase produced this report
+  "step": "form",                      // which step produced this report
   "generatedAtMs": 1731000000900,
+  "funnel": {                          // funnel-integrity state (docs/02 §3)
+    "stepsSeen": ["landing","form"],   // order completed; a gap ⇒ deep-link/bypass
+    "reachedInOrder": true,
+    "linkClickWasTrusted": true,       // Page-2 nav produced by a real click (Sec-Fetch-User + token)
+    "crossNavConsistent": true,        // same JA4/UA/IP across navigations
+    "totalFunnelMs": 11200
+  },
   "score": {
     "automationProbability": 0.93,     // 0–1; P(client is automated) under our evidence model
     "percent": 93,                     // convenience: round(probability * 100)
     "band": "automated",               // "human" | "suspicious" | "automated"
+    "automationType": "agentic-os",    // none|scripted|headless|agentic-cdp|agentic-os|agentic-ext|agentic-declared
     "pass": false,                     // banner: true = green (human), false = red/amber
-    "confidence": 0.9,                 // how much evidence backs the estimate (rises phase 1 → 2)
+    "confidence": 0.9,                 // how much evidence backs the estimate (rises across steps)
     "weightedEvidence": 4.1,           // logit input (sum of weighted signal contributions)
-    "phaseDelta": { "fromPhase1Percent": 88, "changed": ["form_fill_dynamics"] }
+    "stepDelta": { "fromPrevPercent": 88, "changed": ["form_fill_dynamics","funnel_bypass"] }
   },
   "contradictions": [
     { "id": "tls_ua_vendor_mismatch", "severity": "critical",
@@ -188,9 +215,13 @@ interaction **dynamics** — never field **contents**.
 - Per-check `status ∈ pass | warn | fail | unavailable`. `unavailable` (probe
   couldn't run — e.g. WebGL disabled) is excluded from scoring, never shown as a
   pass.
-- `confidence` rises from phase 1 to phase 2 as behavioral evidence lands.
-- `phaseDelta` lets the UI highlight what changed after the form was filled.
-- `contradictions` are the high-weight cross-layer subset, surfaced separately.
+- `confidence` rises across steps (`landing` → `form` → `result`) as behavioral,
+  funnel, and multi-navigation evidence lands.
+- `stepDelta` lets the UI highlight what changed at each step.
+- `automationType` names *what kind* of automation was found (docs/14 §2).
+- `funnel` reports the funnel-integrity state (docs/02 §3).
+- `contradictions` are the high-weight subset (cross-layer *and* cross-navigation),
+  surfaced separately.
 - `raw` is the full echo for "copy report as JSON."
 
 ---
@@ -203,8 +234,8 @@ interaction **dynamics** — never field **contents**.
 
 | Status | When | Body |
 |--------|------|------|
-| `200` | Valid phase-1 or phase-2 analyze | The report |
-| `400` | Malformed JSON, wrong `reportVersion` major, bad `phase` | `{ "error": "bad_request", "detail": "…" }` |
+| `200` | Valid per-step analyze (`landing`/`form`/`result`) | The report |
+| `400` | Malformed JSON, wrong `reportVersion` major, bad `step` | `{ "error": "bad_request", "detail": "…" }` |
 | `404` | Unknown/expired `sessionId` | `{ "error": "session_expired" }` — client re-loads `GET /` to get a fresh session |
 | `413` | Body over cap (e.g. 256 KiB) | `{ "error": "payload_too_large" }` |
 | `429` | Rate limit exceeded | `{ "error": "rate_limited", "retryAfterMs": 2000 }` |

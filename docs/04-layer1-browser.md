@@ -332,7 +332,7 @@ This is the app's deliberate interaction surface: **the homepage is an
 instrumented form**, and phase 2 measures *how the visitor fills it in*. It is the
 richest human-vs-scripted signal class the tool has, and it is only observable
 after interaction — hence the second phase (see
-[docs/01 §4](01-architecture-and-hosting.md#4-the-two-phase-detection-flow)).
+[docs/01 §4](01-architecture-and-hosting.md#4-the-detection-flow-a-3-step-funnel)).
 
 The form should be plausible and self-justifying (e.g. a short "request a demo" /
 "contact us" form: name, email, a select, a message box, a submit button) so a

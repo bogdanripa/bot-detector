@@ -6,55 +6,91 @@
 > logic of its own. Another consumer could collect with the same library and render
 > however it likes — this doc describes *our* reference UI.
 
-The app itself does the reporting: **a big green/red pass-or-fail banner with the
-automation probability, plus a checklist of every test with a status badge next to
-each.** The page is also the measurement surface — it centers **an instrumented
-form** whose fill dynamics feed phase 2.
+The honeypot is a **three-page funnel** ([docs/02](02-deployment-topology.md)):
+a landing page with a link, a form page, and a report page. Each page is a real
+navigation that the server re-captures, and each runs `@botdetect/client`. The
+**report** (banner + checklist) lives on **Page 3**.
 
 Governing constraint: **the frontend must not pollute the fingerprint it
 measures.** No framework, no web-font CDN, no analytics, no third-party requests.
-One small same-origin JS file, one CSS file.
+One small same-origin JS bundle + CSS, served on every page.
 
 ---
 
-## 1. Page structure
+## 1. The three pages
+
+### Page 1 — Landing (`GET /`)
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  HEADER: title + one-line purpose                            │
-├──────────────────────────────────────────────────────────────┤
-│  ███████  VERDICT BANNER (fills on phase 1, updates phase 2)  │
-│  █ 93% █   🔴  LIKELY AUTOMATED                               │
-│  █ auto █   Automation probability: 93%   Confidence: 90%     │
+│                                                              │
+│  A short paragraph of real, readable copy (gives a human a   │
+│  reason to pause and read — dwell is measured).              │
+│                                                              │
+│              →  [ Continue to the check ]  ←  (the LINK)      │
+│                                                              │
+│  (silent) @botdetect/client: passive Layer 1 + instrument    │
+│  the link click (approach trail, trusted, coalesced, dwell)  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+The link is an ordinary `<a href="/step-2?…">`. On a **trusted** click the client
+activates the funnel token ([docs/02 §4](02-deployment-topology.md#4-the-click-gated-funnel-token))
+and the browser navigates normally to Page 2. An agent that jumps straight to
+`/step-2` skips this and trips `funnel_bypass`.
+
+### Page 2 — Form (`GET /step-2`)
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  THE FORM (a plausible "request a demo" / contact form)      │
+│   ┌────────────────────────────────────────────────────────┐ │
+│   │  Name  [__________]   Email [__________]               │ │
+│   │  Topic [ ▼ ]          Message [____________________]   │ │
+│   │  (+ hidden DOM honeypot field; + vision/pursuit traps) │ │
+│   │             [ Submit ▸ ]                               │ │
+│   └────────────────────────────────────────────────────────┘ │
+│   "We measure HOW you fill this in — timing and movement,    │
+│    never what you type. Nothing here is submitted anywhere."  │
+│                                                              │
+│  (silent) passive Layer 1 (again, for cross-page consistency)│
+│  + form behavior + CDP-leak/cadence/biometrics + trap results│
+└──────────────────────────────────────────────────────────────┘
+```
+
+On submit → `POST /api/submit` → 303 → Page 3.
+
+### Page 3 — Report (`GET /result`)
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  ███████  VERDICT BANNER                                     │
+│  █ 93% █   🔴  LIKELY AUTOMATED  ·  agent-driven (agentic-os) │
+│  █ auto █   Automation probability 93%   Confidence 90%      │
 │  ███████   (green 🟢 PASS  /  amber 🟡 SUSPICIOUS  /  red 🔴)  │
 ├──────────────────────────────────────────────────────────────┤
 │  ⚠ CONTRADICTIONS (shown first — they matter most)           │
 │   • TLS says Go/net-http, User-Agent says Chrome   [critical] │
-│   • Header order matches curl                       [high]    │
-├──────────────────────────────────────────────────────────────┤
-│  THE FORM  (the interaction surface — phase 2)               │
-│   ┌────────────────────────────────────────────────────────┐ │
-│   │  Name  [__________]   Email [__________]               │ │
-│   │  Topic [ ▼ ]          Message [____________________]   │ │
-│   │             [ Run the behavioral check ▸ ]             │ │
-│   └────────────────────────────────────────────────────────┘ │
-│   "We measure how you fill this in — timing and movement,    │
-│    never what you type. Nothing here is submitted anywhere."  │
+│   • Reached the form by deep-link (no click)        [high]    │
+│   • JA4 changed between pages 1 and 2               [high]    │
 ├──────────────────────────────────────────────────────────────┤
 │  CHECKLIST — every test, grouped, each with a status badge:  │
-│   Automation flags                                           │
-│     ✓ navigator.webdriver           false          [pass]    │
-│     ✗ ChromeDriver cdc_ artifacts   found (2)       [fail]    │
-│   Transport / network                                        │
-│     ✗ TLS fingerprint vs UA         go-nethttp ≠ Chrome [fail]│
-│     ⚠ IP is datacenter-owned        AS15169 GOOGLE  [warn]    │
-│   Form behavior (phase 2)                                    │
-│     ✗ Typing cadence variance       ~0ms stdev      [fail]    │
+│   Automation flags   · Headless · WebGL/Canvas/Audio         │
+│   Transport/network  · Funnel integrity · Input provenance   │
+│   Form behavior      · Honeypot traps                        │
+│     ✗ Reached form without a real click   [fail]             │
+│     ✗ Click landed at exact element center [fail]            │
+│     ⚠ IP is datacenter-owned   AS15169 GOOGLE  [warn]         │
 │   … all remaining checks …                                   │
 ├──────────────────────────────────────────────────────────────┤
 │  FOOTER: "Copy report as JSON"  ·  privacy note  ·  re-run   │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+The report on Page 3 aggregates **all three steps** — passive Layer 1 (twice),
+Layer 2/3 from all three navigations, the funnel-integrity signals, the link-click
+provenance, the form behavior, and the honeypot-trap outcomes.
 
 ### The banner
 
@@ -64,8 +100,8 @@ One small same-origin JS file, one CSS file.
   alone (colorblind-safe).
 - Shows `confidence` as a secondary line ("confidence 90%") so a green result on
   thin evidence reads honestly.
-- Animates its update from the phase-1 value to the phase-2 value (respecting
-  `prefers-reduced-motion`), with a small "updated after form" note.
+- Shows `automationType` when not `none` (e.g. "agent-driven browser
+  (`agentic-os`)") so the banner says *what kind* of automation was found.
 
 ### Checklist rows
 
@@ -84,33 +120,39 @@ Each check from `report.checks` renders as one row:
 - **Explanation:** the `explanation` string straight from the report — the tool
   teaches as it reports.
 - Rows are grouped by `check.group` (Automation flags, Headless, WebGL/Canvas/
-  Audio, Hardware/Screen, Fonts, Locale, HTTP headers, Transport/network, Form
-  behavior). Groups are collapsible; failing groups auto-expand.
+  Audio, Hardware/Screen, Fonts, Locale, HTTP headers, Transport/network, **Funnel
+  integrity**, **Input provenance**, Form behavior, **Honeypot traps**). Groups are
+  collapsible; failing groups auto-expand.
 
 ---
 
-## 2. Rendering flow (two phases)
+## 2. Rendering flow (across the three pages)
 
 ```
-1. On load, read { sessionId } from the <script id="bootstrap"> island.
-2. Render the page shell with the form live and the banner in a "checking…" state.
-3. PHASE 1: collect passive Layer 1 → POST /api/analyze {phase:1} → render(report1):
-     banner + contradictions + full checklist appear (checks that need phase 2 show
-     "awaiting interaction").
-4. Instrument the form. When the user submits ("Run the behavioral check"):
-     PHASE 2: POST /api/analyze {phase:2, behavior} → render(report2):
-     banner + probability + confidence update in place; changed checks
-     (report.score.phaseDelta.changed) briefly highlight; the form-behavior group
-     fills in.
+Page 1 (/):        read { sessionId, step:'landing', funnelToken } from the bootstrap island;
+                   collect passive Layer 1; instrument the link;
+                   POST /api/analyze {step:'landing'}  (fire-and-forget; no report shown yet).
+Page 2 (/step-2):  collect passive Layer 1 again; instrument the form + traps;
+                   on submit POST /api/analyze {step:'form'} then POST /api/submit → 303 /result.
+Page 3 (/result):  read the aggregated report (server-rendered island, or GET it);
+                   render(report): banner + automationType + contradictions + full checklist.
 ```
+
+Pages 1–2 collect silently (the funnel should feel like an ordinary sign-up flow —
+that naturalness is what makes the behavior measurable). The **verdict is revealed
+on Page 3**. A single small `app.js` handles all three pages, branching on
+`bootstrap.step`.
+
+```
+
+The banner + checklist are rendered once, on Page 3, from the aggregated report:
 
 ```js
-function render(report) {
-  renderBanner(report.score);                 // %, band, color, confidence, pass/fail
-  renderContradictions(report.contradictions); // sorted by severity, on top
+function render(report) {                        // Page 3 only
+  renderBanner(report.score);                    // %, band, color, confidence, automationType, pass/fail
+  renderContradictions(report.contradictions);   // sorted by severity, on top
   const groups = groupBy(report.checks, c => c.group);
   for (const [name, checks] of groups) renderGroup(name, checks);
-  if (report.score.phaseDelta) highlightChanged(report.score.phaseDelta.changed);
   wireCopyJson(report);
 }
 ```
@@ -120,41 +162,41 @@ from the JSON contract ([docs/03](03-api-contract.md)).
 
 ---
 
-## 3. The form (interaction surface)
+## 3. The form (Page 2, interaction surface)
 
 - A plausible, self-justifying form: **name, email, a topic `<select>`, a message
-  `<textarea>`, a submit button** labeled as the behavioral check ("Run the
-  behavioral check").
+  `<textarea>`, and a normal **Submit** button** — it should read like an ordinary
+  "request a demo" form, not a "bot test," so the interaction is natural.
 - Instrumented per [docs/04 §2.8](04-layer1-browser.md#28-form-behavior-signals-phase-2):
   per-field cadence, focus/tab order, mouse path into fields, paste-vs-type,
   corrections, submit timing.
 - **Privacy, stated inline:** *"We measure how you fill this in — timing and
-  movement — never what you type. Nothing here is submitted anywhere."* And it's
-  true: `submit` is `preventDefault()`ed; only dynamics (counts/timings/variances)
-  are sent; field **contents never leave the browser**.
-- Works for keyboard-only and autofill users: if the user tabs through or uses a
-  password manager, phase 2 simply reports lower behavioral confidence rather than
-  penalizing them (autofill ≠ automation — see the gating in
+  movement — never what you type. Nothing here is stored."* And it's true: only
+  dynamics (counts/timings/variances) are sent; field **contents never leave the
+  browser** — the `POST /api/submit` carries the behavior payload, not the values.
+- On submit → `POST /api/submit` → the server 303-redirects to **Page 3**
+  (`/result`), which shows the verdict. (Submitting is a real navigation, so it's
+  also a funnel transition the server captures.)
+- Works for keyboard-only and autofill users: tabbing through or using a password
+  manager lowers behavioral confidence rather than penalizing them (autofill ≠
+  automation — see the gating in
   [docs/07 §2.6](07-coherence-engine.md#26-form-behavior-layer-1-phase-2-bounded)).
 - **Embeds the active honeypot traps** ([docs/14 §8B](14-agentic-and-cdp-detection.md#8b-active-honeypot-probes--dom-agent-vs-vision-agent-traps)):
   a DOM honeypot field (off-screen, `aria-hidden`, "leave empty"), a vision trap,
-  a smooth-pursuit target, and a gesture-gated token. These bait real-browser AI
-  agents and, by *which* trap trips, attribute the agent as DOM-based vs.
-  vision-based. They must never trap assistive tech (accessibility caveat in §8B).
-- **The banner shows `automationType`** when it's not `none` — e.g. a red banner
-  reading "Likely automated — agent-driven browser (`agentic-os`)" so the report
-  says *what kind* of automation it found, not just the probability.
+  a smooth-pursuit target. These bait real-browser AI agents and, by *which* trap
+  trips, attribute the agent as DOM-based vs. vision-based. They must never trap
+  assistive tech (accessibility caveat in §8B).
 
 ---
 
-## 4. "Copy report as JSON" & re-run
+## 4. "Copy report as JSON" & re-run (Page 3)
 
-- **Copy JSON:** one button copies `report.raw` + `score` + `contradictions`,
-  pretty-printed, to the clipboard (with a "Download JSON" `Blob` fallback where
-  clipboard is blocked). Primary sharing/debugging affordance — a QA engineer
-  pastes it into a bug report.
-- **Re-run:** reloads `GET /` (fresh session → fresh connection capture), so a
-  developer can tweak their client and immediately re-test.
+- **Copy JSON:** one button copies `report.raw` + `score` + `contradictions` +
+  `funnel`, pretty-printed, to the clipboard (with a "Download JSON" `Blob`
+  fallback). Primary sharing/debugging affordance — a QA engineer pastes it into a
+  bug report.
+- **Re-run:** returns to `GET /` (fresh session → fresh funnel), so a developer can
+  tweak their client and traverse the funnel again.
 
 ---
 
@@ -162,13 +204,13 @@ from the JSON contract ([docs/03](03-api-contract.md)).
 
 | State | UI |
 |-------|-----|
-| Phase-1 checking | Shell + form live + banner "analyzing…"; checklist skeleton |
-| Phase-1 done | Banner + probability + full checklist; behavior checks show "awaiting interaction" |
-| Phase-2 done | Banner/probability/confidence updated in place; behavior group filled; changed checks highlighted |
+| Page 1 / Page 2 | Ordinary landing + form; collection is silent (no verdict shown yet) |
+| Page 3 rendering | Banner "compiling report…" then the full report |
+| Page 3 done | Banner + probability + `automationType` + confidence + full grouped checklist |
 | Probe failed (e.g. WebGL disabled) | That check greys to `unavailable` with a reason; score unaffected |
-| Session expired (404) | Friendly card: "session expired — reload to re-run"; a reload button |
+| Funnel bypass (deep-linked to `/step-2` or `/result`) | Page 3 still renders, with the `funnel_bypass` contradiction prominent and the missing steps noted |
+| Session expired (404) | Friendly card: "session expired — start over"; a link back to `/` |
 | Analyze error (400/429/5xx) | Error card with retry; never a blank page |
-| No interaction | Phase-1 report stands; a subtle "fill the form for a deeper check" nudge; behavior stays `inconclusive` |
 
 ---
 

@@ -44,28 +44,29 @@ green/red pass-or-fail banner, and a checklist of every individual test.
    logistic so the output reads as "≈93% likely automated," bucketed into a
    green/amber/red banner. See [docs/07](docs/07-coherence-engine.md).
 
-## How a visit works (two-phase detection)
+## How a visit works (a 3-step funnel)
+
+The honeypot is a three-page funnel; each page is a real navigation the server
+re-captures, and each transition between pages is itself a detection signal.
 
 ```
-GET /  (page load, real navigation)
-   │  server captures Layer 2 (headers, order) + Layer 3 (TLS/JA4, HTTP2, IP/ASN)
-   │  for THIS connection, keyed to a session
-   ▼
-Phase 1 — on load:  client collects passive Layer-1 signals (navigator, WebGL,
-   canvas, screen, fonts…) and POSTs them. Server merges with the connection
-   signals and returns an INITIAL automation probability + full checklist.
-   The page renders the green/red banner immediately.
-   ▼
-Phase 2 — after the user fills in the on-page form:  the client streams
-   behavioral dynamics (typing cadence, mouse path to fields, focus order,
-   paste, corrections, submit timing) and POSTs them. The server refines the
-   probability and the banner/checklist update live.
+PAGE 1  GET /          Landing: some text + a link.
+   │   server captures Layer 2 (headers, order) + Layer 3 (TLS/JA4, HTTP2, IP/ASN);
+   │   client collects passive Layer 1 + instruments the LINK click.
+   │        ↓  the user CLICKS the link  (a real, trusted, approached click)
+PAGE 2  GET /step-2     Form: name/email/topic/message + submit (+ hidden honeypot traps).
+   │   server re-captures Layer 2/3 and VERIFIES the transition (was it a real click?);
+   │   client collects passive Layer 1 again + form behavior + trap outcomes.
+   │        ↓  the user FILLS + SUBMITS the form
+PAGE 3  GET /result     Report: the green/amber/red verdict, automationType, and
+        the full checklist — aggregated across all three steps.
 ```
 
-The homepage is **a real, instrumented form** — that's the deliberate interaction
-surface that lets us watch *how* the visitor operates the app, which is a rich
-extra source of human-vs-scripted signal. We record interaction *dynamics*, never
-the field *contents*.
+Two natural interactions (a link click, then a form fill) instead of an artificial
+"interact here" box — and the funnel turns the **transitions** into signals: did a
+real click produce Page 2, or did the client deep-link to the form URL? Is it the
+**same JA4/IP** across all three navigations? We record interaction *dynamics* and
+funnel *integrity*, never the field *contents*. See [docs/02](docs/02-deployment-topology.md).
 
 ## Documentation
 

@@ -80,22 +80,30 @@ on it.
 
 ## Part B — the honeypot (assembling the libraries)
 
-### M6 — honeypot server (compose the Go libs)
+### M6 — honeypot server: the 3-step funnel (compose the Go libs)
 
 - `honeypot/server`: TLS-terminating Go server that wires `tlscapture` +
-  `httpcapture` + `ipasn` + `engine`; the two-phase `/api/analyze`; session
-  capture at `GET /` ([docs/02](02-deployment-topology.md)); `autocert`.
-- **Accept:** a page load captures all three layers on one connection and returns
-  a phase-1 report; `/api/health` green; deploys to a VM.
+  `httpcapture` + `ipasn` + `engine`; the three routes `GET /`, `GET /step-2`,
+  `GET /result` + `POST /api/analyze` (per step) + `POST /api/submit`; per-page
+  connSignals capture and session/funnel state; the click-gated funnel token; the
+  funnel-integrity checks (`funnel_bypass`, `cross_nav_inconsistency`)
+  ([docs/02](02-deployment-topology.md)); `autocert`.
+- **Accept:** traversing `/` → `/step-2` → `/result` captures all three layers on
+  each navigation; a deep-link straight to `/step-2` trips `funnel_bypass`; a JA4
+  change between pages trips `cross_nav_inconsistency`; `/api/health` green;
+  deploys to a VM.
 
-### M7 — honeypot web app (compose the client lib) + report UI
+### M7 — honeypot web app: the three pages (compose the client lib) + report UI
 
-- `honeypot/web`: imports `@botdetect/client`; the instrumented form; the
-  green/amber/red banner + live-updating checklist + contradictions + "copy JSON" +
-  "re-run" ([docs/08](08-frontend-ui.md)); two-phase render.
+- `honeypot/web`: one small `app.js` (branches on `bootstrap.step`) imports
+  `@botdetect/client`; **Page 1** landing with an instrumented link; **Page 2** the
+  form + honeypot traps; **Page 3** the report — green/amber/red banner +
+  `automationType` + checklist + contradictions + "copy JSON" + "re-run"
+  ([docs/08](08-frontend-ui.md)).
 - Accessibility, light/dark, reduced-motion, strict CSP, dependency-free frontend.
-- **Accept:** full report renders and updates across both phases; a11y check
-  passes; zero third-party requests.
+- **Accept:** the full funnel runs; Page 3 renders the aggregated report; a real
+  click on Page 1 activates the funnel token; a11y check passes (traps don't catch
+  assistive tech); zero third-party requests.
 
 ### M8 — HTTP/2 fingerprint + locale coherence
 
@@ -172,7 +180,7 @@ Part B (honeypot, consumes A)
 - **M4 is the first independently useful artifact** — a degradation-aware engine
   that a server-only or client-only consumer can use *before the honeypot exists*.
 - **M6+M7 is the first shippable honeypot** — the reference integration proving the
-  libraries compose into the full three-layer, two-phase experience.
+  libraries compose into the full three-layer, three-step-funnel experience.
 - **M9 is the frontier** — on-device agentic-browser detection; pull it earlier if
   catching Comet/Atlas/computer-use is the priority rather than a later hardening
   step.
@@ -185,8 +193,9 @@ Part B (honeypot, consumes A)
    recipes: client-only, server-only, full stack, and Layer-3-absent — the engine
    scores each honestly with correct coverage/confidence.
 2. Shared, versioned wire schema; Go and JS engines agree on shared fixtures.
-3. The **honeypot** self-hosts, terminates its own TLS, and delivers the two-phase
-   automation-probability report (banner + checklist + contradictions) by composing
+3. The **honeypot** self-hosts, terminates its own TLS, and delivers the 3-step
+   funnel's automation-probability report (banner + checklist + contradictions +
+   funnel integrity) by composing
    the libraries with no detection logic of its own.
 4. The validation matrix passes, pinned by golden tests in CI; the probability is
    calibrated across the labeled classes.
