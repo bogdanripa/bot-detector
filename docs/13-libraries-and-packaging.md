@@ -27,6 +27,7 @@ in [docs/04](04-layer1-browser.md) (Layer 1), [docs/05](05-layer2-http.md)
 | **Composable** | Each layer is its own package with no hard dependency on the others. Import Layer 1 alone, or Layer 2+3, or just the engine. |
 | **Degradable** | Any layer can be absent. The engine accepts a partial `SignalSet` and returns a probability + an explicit `coverage`; missing layers lower `confidence`, never crash. |
 | **Embeddable** | Drop the server pieces into an *existing* Go server as `net/http` middleware; drop the client piece into an *existing* web app as one small ES module. No framework, no global state. |
+| **Drop-in & automatic** | Adding detection to an existing app is ~1–3 lines; after install, collection runs **automatically in the background** — the client auto-instruments the host's existing forms/links/inputs/navigations (no per-element wiring), the server middleware auto-mounts its ingest endpoint and scores on the request context. **Observe by default** (never blocks/mutates the host), **non-interfering** (passive capture-phase listeners, one namespaced global, fully isolated). See [docs/15](15-drop-in-integration.md). |
 | **Framework-agnostic** | The client lib is vanilla TS with zero runtime deps. The server libs depend only on the Go stdlib + a couple of well-scoped packages. |
 | **Language-honest** | Detection that must run in the browser is a JS/TS lib; detection that must run at the socket is a Go lib. The scoring *rules* are language-neutral (a shared JSON config) so both sides agree. |
 | **Stable contract** | The wire format between client and server is its own versioned package, imported by both, so they can't drift. |
@@ -285,6 +286,12 @@ or only the client piece" is a first-class supported mode, not a degraded hack.
 ---
 
 ## 5. Integration recipes
+
+> **The minimal-effort path is the default.** Most consumers add the client script
+> tag + wrap their handler (Tier 1) or also wrap their `tls.Config` (Tier 2), and
+> detection runs automatically in the background — see the effort ladder and
+> auto-instrumentation contract in [docs/15](15-drop-in-integration.md). The recipes
+> below are the underlying compositions those tiers expand to.
 
 ### 5.1 Full stack, own the socket (what the honeypot does)
 

@@ -22,10 +22,13 @@ green/red pass-or-fail banner, and a checklist of every individual test.
    scoring engine, all speaking a shared, versioned wire schema. They're
    **flexible**: take all of them, or just the client-side piece, or just the
    server-side piece, or everything except Layer 3. Any layer can be absent — the
-   engine scores whatever it gets and reports its coverage. The server libs are
-   offered per language — **Go first** (the only one where Layer-3 TLS capture is
-   clean), with [`node/`](node/) and [`python/`](python/) as "to be implemented"
-   stubs. See [docs/13](docs/13-libraries-and-packaging.md).
+   engine scores whatever it gets and reports its coverage. They're **drop-in**:
+   adding them to an existing app is ~1–3 lines (a script tag + a middleware wrap),
+   after which detection runs **automatically in the background** and the host
+   reads a verdict whenever it wants — or never ([docs/15](docs/15-drop-in-integration.md)).
+   The server libs are offered per language — **Go first** (the only one where
+   Layer-3 TLS capture is clean), with [`node/`](node/) and [`python/`](python/) as
+   "to be implemented" stubs. See [docs/13](docs/13-libraries-and-packaging.md).
 2. **The honeypot** — the deployable diagnostic app (the 3-step funnel + the
    report UI). It's **one consumer** of the libraries, wiring them together into
    the full three-layer experience. It has no detection logic of its own. See
@@ -96,6 +99,7 @@ We record interaction *dynamics* and funnel *integrity*, never the field
 | 12 | [Roadmap & milestones](docs/12-roadmap.md) | Ordered build steps: libraries first, honeypot second |
 | 13 | [Libraries & packaging](docs/13-libraries-and-packaging.md) | The two-part split: package boundaries, public APIs, the capability model, distribution |
 | 14 | [Agentic & CDP detection](docs/14-agentic-and-cdp-detection.md) | Catching real-browser AI agents (Comet, Atlas, Claude computer-use, Operator, CDP stealth): input provenance, screenshot cadence, behavioral biometrics, CDP leaks, Web Bot Auth |
+| 15 | [Drop-in integration](docs/15-drop-in-integration.md) | Adding the libraries to an existing app with ~1–3 lines; auto-instrumentation, background detection, the effort tiers, non-interference guarantees |
 
 The honeypot self-hosts on a single server that terminates its own TLS. The split
 app-plus-edge-probe design is retained only as a

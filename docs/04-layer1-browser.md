@@ -2,9 +2,14 @@
 
 > **This is the spec for the `@botdetect/client` library**
 > ([docs/13 §3.1](13-libraries-and-packaging.md#31-botdetectclient-ts-browser--layer-1)).
-> A consumer imports it to collect Layer-1 signals; the honeypot is one such
-> consumer. The library returns plain objects and never assumes an endpoint — the
-> consumer owns transport.
+> The collectors below are the building blocks. In **drop-in mode** a host calls
+> `botdetect.autostart({ endpoint })` (or adds one `<script>` tag) and the library
+> **auto-instruments the existing page** — passive collection on load, plus global
+> capture-phase listeners that cover the host's own forms/links/inputs/scroll and
+> SPA route changes, batched and beaconed automatically, with **no per-element
+> wiring and no `preventDefault`** ([docs/15](15-drop-in-integration.md)). The
+> honeypot ([docs/08](08-frontend-ui.md)) drives the same collectors manually for
+> its bespoke funnel; both paths share this spec.
 
 Everything in this layer is collected by JavaScript in the visitor's browser. It
 is the richest layer and the only one that works with **no server at all** (a

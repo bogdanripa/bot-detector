@@ -12,6 +12,13 @@ a fresh top-level request whose Layer 2/3 it captures directly.
 > A different consumer with a smaller capability set uses the same libraries — see
 > [docs/13 §5](13-libraries-and-packaging.md#5-integration-recipes).
 
+> **This is the *maximal* integration (Tier 3).** The funnel is engineered to
+> *elicit* the strongest signal (a forced below-fold scroll, a click-gated token,
+> dedicated DOM/vision traps). A normal app doesn't need any of this: it **drops
+> the libraries in** (~1–3 lines) and gets background detection over its own pages
+> and forms — see the effort tiers in [docs/15](15-drop-in-integration.md). Read
+> this doc as "what full strength looks like," not "what every consumer must build."
+
 ---
 
 ## 1. The funnel
