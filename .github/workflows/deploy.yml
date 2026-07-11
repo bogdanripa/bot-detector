@@ -29,7 +29,9 @@ jobs:
         run: go test ./go/...
 
       - name: Build static linux/amd64 binary (assets embedded)
-        run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o honeypot ./honeypot/server
+        # -o must not be plain "honeypot": that's an existing source directory,
+        # and go build refuses to overwrite it.
+        run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/honeypot ./honeypot/server
 
       - name: Deploy over SSH
         env:
@@ -54,7 +56,7 @@ jobs:
           SSH_OPTS="$SSH_OPTS -o IdentitiesOnly=yes -i $HOME/.ssh/id_deploy"
 
           echo "→ copying binary…"
-          scp $SSH_OPTS honeypot "$DEPLOY_HOST:/tmp/honeypot"
+          scp $SSH_OPTS /tmp/honeypot "$DEPLOY_HOST:/tmp/honeypot"
           echo "→ installing + restarting…"
           # The deploy user owns /opt/honeypot (so install needs no sudo) and has
           # exactly one NOPASSWD sudo rule: `systemctl restart honeypot`.
