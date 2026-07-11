@@ -42,30 +42,68 @@ bot-detector/
 │   ├── engine-js/                    # @botdetect/engine   — JS scoring (for client-only deploys)
 │   └── schema/                       # @botdetect/schema   — shared wire types (TS) + JSON Schema
 │
-├── go/                               # Go libraries (Go modules)
-│   ├── httpcapture/                  # .../httpcapture     — Layer 2: header values + order (middleware)
-│   ├── tlscapture/                   # .../tlscapture      — Layer 3: TLS ClientHello → JA3/JA4, HTTP/2 fp
-│   ├── ipasn/                        # .../ipasn           — Layer 3: IP → ASN, datacenter classification
-│   ├── engine/                       # .../engine          — scoring engine (authoritative)
-│   └── schema/                       # .../schema          — shared wire types (Go), generated from JSON Schema
+├── go/            ✅ IMPLEMENTED    # Go server libraries (Go modules) — the reference impl
+│   ├── httpcapture/                  # Layer 2: header values + order (net/http middleware)
+│   ├── tlscapture/                   # Layer 3: TLS ClientHello → JA3/JA4, HTTP/2 fp
+│   ├── ipasn/                        # Layer 3: IP → ASN, datacenter classification
+│   ├── engine/                       # scoring engine (authoritative)
+│   └── schema/                       # shared wire types (Go), generated from JSON Schema
+│
+├── node/          🚧 TO BE IMPLEMENTED  # Node server libraries — README stub + capability notes
+├── python/        🚧 TO BE IMPLEMENTED  # Python server libraries — README stub + capability notes
 │
 ├── config/
-│   └── scoring.json                  # language-neutral weights/rules/thresholds (single source of truth)
+│   ├── scoring.json                  # language-neutral weights/rules/thresholds (single source of truth)
 │   └── reference/                    # header-order / JA4 / H2 / ASN reference tables (docs/09)
 │
 ├── honeypot/                         # THE DEPLOYABLE APP — a consumer of the libraries
-│   ├── server/                       # Go: composes httpcapture + tlscapture + ipasn + engine; serves the form + /api/analyze
-│   └── web/                          # TS: composes @botdetect/client; renders the banner + checklist
+│   ├── server/                       # composes go/ (httpcapture + tlscapture + ipasn + engine); serves the funnel
+│   └── web/                          # TS: composes @botdetect/client; renders the pages + report
 │
 └── docs/
 ```
 
-- **`packages/*`** publish to npm; **`go/*`** are Go modules (one module with
-  multiple packages, or separate modules if you want independent versioning).
+- **`packages/*`** publish to npm; **`go/*`** are Go modules. `node/` and
+  `python/` are **placeholders** for now — each ships only a `README.md` describing
+  the packages to build, the public API to match (mirroring `go/`), and the
+  Layer-3 caveat (see [§2.1](#21-language-support-go-first)).
 - **`config/scoring.json`** is the shared source of truth for weights and rules,
-  read by both `go/engine` and `packages/engine-js` (see [§6](#6-scoring-config-one-source-two-engines)).
-- **`honeypot/`** is *just an integration*. Deleting it leaves a fully usable set
-  of libraries; that's the test of whether the split is real.
+  read by every engine port — `go/engine`, `@botdetect/engine` (JS, browser + Node),
+  and eventually a Python engine (see [§6](#6-scoring-config-one-source-two-engines)).
+- **`honeypot/`** is *just an integration* over `go/` + `@botdetect/client`.
+  Deleting it leaves a fully usable set of libraries; that's the test of whether
+  the split is real.
+
+### 2.1 Language support (Go first)
+
+The **server** libraries are offered per language — Go, Node, Python — because a
+consumer embeds them in *their* backend. We implement **one language fully first,
+Go**, and ship `README.md` stubs for the others.
+
+**Why Go first: Layer 3.** Capturing the TLS ClientHello (→ JA3/JA4), the HTTP/2
+fingerprint, and raw header order requires owning the socket, and Go is the only
+one of the three where that is clean: `crypto/tls`'s `GetConfigForClient` exposes
+the parsed `ClientHelloInfo`, `utls` gives extension order, `x/net/http2`'s framer
+reads the SETTINGS frame, and mature JA3/JA4 libraries exist. In Node and Python,
+`tls`/`ssl` don't surface the ClientHello at all. Everything *else* (Layer 2
+values, IP/ASN, the engine) is easy in every language — Layer 3 is what forces the
+order.
+
+| Capability | `go/` ✅ | `node/` 🚧 | `python/` 🚧 |
+|------------|:-------:|:---------:|:-----------:|
+| Layer 2 header **values** (`httpcapture`) | ✅ native | ✅ easy (ASGI/WSGI/`http` middleware) | ✅ easy |
+| Layer 2 header **order** | ✅ raw read | ✅ HTTP/1.1 via `req.rawHeaders` (H2 harder) | ⚠️ framework-dependent |
+| Layer 3 IP/ASN (`ipasn`) | ✅ | ✅ | ✅ |
+| Layer 3 **TLS JA3/JA4 + H2 fp** (`tlscapture`) | ✅ native | ❌ hard — needs raw-TCP ClientHello peek, a native addon, **or a Go sidecar** | ❌ hard — same options |
+| Scoring **engine** | ✅ `go/engine` | ✅ **reuses `@botdetect/engine`** (JS) — no port | ⚠️ port needed (reads `scoring.json`) |
+
+The honest consequence: a Node or Python server can deliver Layers 1–2 + IP/ASN +
+scoring immediately, but for **Layer 3** it must either front the app with a small
+Go `tlscapture` sidecar that terminates TLS, or accept `layer3Tls: unavailable`
+(the engine already scores around it — [§4](#4-the-capability-model-flexibility)).
+The **browser client** (`@botdetect/client`) is inherently JS/TS and shared by all
+three server languages. Each language's stub README records this so an implementer
+starts with eyes open.
 
 ---
 
@@ -312,8 +350,14 @@ rule-functions; adding a rule is a function + a config entry + a test.
 | Artifact | Distribution | Versioning |
 |----------|-------------|------------|
 | `@botdetect/client`, `@botdetect/engine`, `@botdetect/schema` | npm | semver; `schema` bumps major on wire-breaking changes (`reportVersion`) |
-| `go/httpcapture`, `tlscapture`, `ipasn`, `engine`, `schema` | Go modules | semver tags; `schema` pinned to the same `reportVersion` |
+| `go/httpcapture`, `tlscapture`, `ipasn`, `engine`, `schema` ✅ | Go modules | semver tags; `schema` pinned to the same `reportVersion` |
+| `node/*` 🚧 (planned) | npm (server pkgs; reuses `@botdetect/engine`) | mirrors Go API + `reportVersion` |
+| `python/*` 🚧 (planned) | PyPI | mirrors Go API + `reportVersion` |
 | `config/scoring.json`, `config/reference/*` | embedded in the engine builds + published as a versioned data artifact | its own `configVersion` + `generatedAt`, surfaced in the report |
+
+Go ships first ([§2.1](#21-language-support-go-first)); Node and Python are
+`README.md` stubs until built, and their engines must agree with Go on the shared
+`SignalSet` fixtures before release.
 
 - The **wire contract** (`schema`) is the coupling point; everything else depends
   on it, not on each other. Client `1.x` and server `1.x` interoperate as long as

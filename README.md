@@ -18,16 +18,22 @@ green/red pass-or-fail banner, and a checklist of every individual test.
 
 1. **Detection libraries** — small, composable, independently importable packages
    that do the actual detection: a browser client lib (Layer 1 + form behavior),
-   Go server libs (Layer 2 HTTP capture, Layer 3 TLS/JA4/HTTP2 capture, IP/ASN),
-   and a scoring engine (Go + a JS port), all speaking a shared, versioned wire
-   schema. They're **flexible**: take all of them, or just the client-side piece,
-   or just the server-side piece, or everything except Layer 3. Any layer can be
-   absent — the engine scores whatever it gets and reports its coverage. See
-   [docs/13](docs/13-libraries-and-packaging.md).
-2. **The honeypot** — the deployable diagnostic app (the instrumented form + the
+   server libs (Layer 2 HTTP capture, Layer 3 TLS/JA4/HTTP2 capture, IP/ASN), and a
+   scoring engine, all speaking a shared, versioned wire schema. They're
+   **flexible**: take all of them, or just the client-side piece, or just the
+   server-side piece, or everything except Layer 3. Any layer can be absent — the
+   engine scores whatever it gets and reports its coverage. The server libs are
+   offered per language — **Go first** (the only one where Layer-3 TLS capture is
+   clean), with [`node/`](node/) and [`python/`](python/) as "to be implemented"
+   stubs. See [docs/13](docs/13-libraries-and-packaging.md).
+2. **The honeypot** — the deployable diagnostic app (the 3-step funnel + the
    report UI). It's **one consumer** of the libraries, wiring them together into
-   the full three-layer, two-phase experience. It has no detection logic of its
-   own. See [docs/02](docs/02-deployment-topology.md) + [docs/08](docs/08-frontend-ui.md).
+   the full three-layer experience. It has no detection logic of its own. See
+   [docs/02](docs/02-deployment-topology.md) + [docs/08](docs/08-frontend-ui.md).
+
+**Source layout:** [`go/`](go/) ✅ (reference impl) · [`node/`](node/) 🚧 ·
+[`python/`](python/) 🚧 · `packages/` (browser client + JS engine + schema) ·
+`config/` (shared scoring + reference data) · `honeypot/` (the app) · `docs/`.
 
 ## Two decisions that shape the honeypot
 
