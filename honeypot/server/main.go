@@ -20,6 +20,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"strings"
 	"sync"
@@ -140,6 +141,13 @@ func main() {
 		IdleTimeout: 30 * time.Second,
 	}
 	go sweepSessions()
+	// Load AI-crawler published IP ranges in the background; refresh daily.
+	go func() {
+		loadAIRanges()
+		for range time.Tick(12 * time.Hour) {
+			loadAIRanges()
+		}
+	}()
 	log.Printf("honeypot listening on %s (https, http/1.1)", addr)
 	log.Fatal(srv.Serve(ln))
 }
@@ -175,6 +183,83 @@ func firstSub(s string, subs []string) string {
 		}
 	}
 	return ""
+}
+
+// aiRangeSources maps an indexer UA token to its provider's published IP-range
+// JSON (OpenAI-style {"prefixes":[{"ipv4Prefix":"..."}]}). When a token has a
+// loaded range list we CORRELATE the UA with the IP (spoof-proof); otherwise we
+// fall back to UA-only so indexing still works. Anthropic/Perplexity can be
+// added here once their range-list URLs are wired.
+var aiRangeSources = map[string]string{
+	"GPTBot":        "https://openai.com/gptbot.json",
+	"OAI-SearchBot": "https://openai.com/searchbot.json",
+}
+
+var (
+	aiRangesMu sync.RWMutex
+	aiRanges   = map[string][]netip.Prefix{}
+)
+
+func aiRangesFor(tok string) ([]netip.Prefix, bool) {
+	aiRangesMu.RLock()
+	defer aiRangesMu.RUnlock()
+	p := aiRanges[tok]
+	return p, len(p) > 0
+}
+
+func ipInPrefixes(ip string, prefixes []netip.Prefix) bool {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return false
+	}
+	for _, p := range prefixes {
+		if p.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// loadAIRanges fetches and parses each provider's published IP-range list.
+func loadAIRanges() {
+	type prefixEntry struct {
+		V4 string `json:"ipv4Prefix"`
+		V6 string `json:"ipv6Prefix"`
+	}
+	type doc struct {
+		Prefixes []prefixEntry `json:"prefixes"`
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	for tok, url := range aiRangeSources {
+		resp, err := client.Get(url)
+		if err != nil {
+			log.Printf("ai-ranges: %s fetch failed: %v", tok, err)
+			continue
+		}
+		var d doc
+		derr := json.NewDecoder(resp.Body).Decode(&d)
+		resp.Body.Close()
+		if derr != nil {
+			log.Printf("ai-ranges: %s decode failed: %v", tok, derr)
+			continue
+		}
+		var ps []netip.Prefix
+		for _, e := range d.Prefixes {
+			s := e.V4
+			if s == "" {
+				s = e.V6
+			}
+			if p, err := netip.ParsePrefix(s); err == nil {
+				ps = append(ps, p)
+			}
+		}
+		if len(ps) > 0 {
+			aiRangesMu.Lock()
+			aiRanges[tok] = ps
+			aiRangesMu.Unlock()
+			log.Printf("ai-ranges: loaded %d prefixes for %s", len(ps), tok)
+		}
+	}
 }
 
 // verifiedCrawlers maps a UA token to the reverse-DNS suffixes its IPs must
@@ -215,9 +300,17 @@ func allowDecision(r *http.Request, ip string) (bool, string) {
 	if firstSub(ua, aiRealtimeAgents) != "" {
 		return false, ""
 	}
-	// Indexing / training crawlers: let them index our content.
+	// Indexing / training crawlers: let them index our content. When we have the
+	// provider's published IP ranges, correlate UA with IP (spoof-proof); else
+	// fall back to UA-only so indexing still works.
 	if tok := firstSub(ua, aiIndexers); tok != "" {
-		return true, "indexing crawler (" + tok + ")"
+		if prefixes, have := aiRangesFor(tok); have {
+			if ipInPrefixes(ip, prefixes) {
+				return true, "verified " + tok + " (UA + published IP range)"
+			}
+			return false, "" // claims an indexer UA but IP isn't in its range → spoof
+		}
+		return true, "indexing crawler (" + tok + ", UA only)"
 	}
 	for _, sub := range uaAllowlist { // operator-trusted UA
 		if strings.Contains(ua, sub) {
@@ -317,6 +410,7 @@ type snapshot struct {
 	ja4, ua, ip string
 }
 type session struct {
+	mu               sync.Mutex // guards all mutable fields below (see funnelHandler/handleAnalyze)
 	ID               string
 	Mode             string
 	CreatedMs        int64
@@ -330,6 +424,7 @@ type session struct {
 	LinkClick        *schema.LinkClick
 	Behavior         *schema.Behavior
 	Traps            *schema.Traps
+	ClickPattern     *schema.ClickPattern
 	Token            string
 	TokenActivated   bool
 	LastSecFetchUser string
@@ -447,6 +542,7 @@ func (s *session) signalSet() schema.SignalSet {
 		Layer1: s.Layer1, Layer2: s.Layer2, Layer3: s.Layer3,
 		ScrollToLink: s.ScrollToLink, LinkClick: s.LinkClick,
 		Behavior: s.Behavior, Traps: s.Traps, Funnel: s.funnel(),
+		ClickPattern: s.ClickPattern,
 	}
 }
 
@@ -490,6 +586,13 @@ func handleReset(w http.ResponseWriter, r *http.Request) {
 func funnelHandler(mode, step string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		s := getSession(w, r, true)
+		// Hold the session lock for the whole handler: captureConn and the
+		// eng.Score reads below touch the same fields handleAnalyze writes, and
+		// the client fires a beacon to /api/analyze at the instant it navigates
+		// here — so these run concurrently. Per-session lock serializes them
+		// (different sessions never contend).
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		s.Mode = mode
 		captureConn(s, r, step)
 
@@ -595,6 +698,9 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"session_expired"}`, http.StatusNotFound)
 		return
 	}
+	// Serialize with the funnel handler's reads of the same session (see there).
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if p.Layer1 != nil {
 		s.Layer1 = p.Layer1
 	}
@@ -612,6 +718,9 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	}
 	if p.Traps != nil {
 		s.Traps = p.Traps
+	}
+	if p.ClickPattern != nil {
+		s.ClickPattern = p.ClickPattern
 	}
 	report := eng.Score(s.signalSet())
 	report.Step = p.Step

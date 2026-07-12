@@ -159,6 +159,12 @@
       "status": "fail",
       "title": "Real-time AI agent",
       "explanation": "User-Agent of an on-demand AI fetcher (ChatGPT-User, Perplexity-User, Claude-User, Meta-ExternalFetcher) \u2014 a user driving an agent in real time, not an indexer."
+    },
+    "click_position_pattern": {
+      "weight": 2.5,
+      "status": "fail",
+      "title": "Fixed click placement",
+      "explanation": "Clicks land at the same relative spot inside targets (e.g. always dead-center) across many clicks \u2014 a scripted, fixed offset. Needs several clicks to conclude."
     }
   },
   "contradictions": {

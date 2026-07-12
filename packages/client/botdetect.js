@@ -348,7 +348,7 @@
   var behaviorMonitor = (function () {
     var KEY = "bd_behavior_v1";
     var state = { total: 0, suspicious: 0, reasons: {}, startMs: 0 };
-    var started = false, rafPending = false, lastSaveMs = 0;
+    var started = false, rafPending = false, lastSaveMs = 0, lastCPMs = 0;
     var lastMoveMs = 0, lastScrollMs = 0, lastGestureMs = 0, lastScrollY = 0, keyTimes = [];
     function tnow() { return Date.now(); }
     function load() {
@@ -389,8 +389,40 @@
     }
     function onPointerDown(e) {
       if (fromSidebar(e)) return;
-      if (e.isTrusted === false) return observe(true, "synthetic click (isTrusted=false)");
-      observe(exactCenter(e), "injected click (exact element center)");
+      if (e.isTrusted === false) observe(true, "synthetic click (isTrusted=false)");
+      else observe(exactCenter(e), "injected click (exact element center)");
+      recordClickPlacement(e);
+    }
+    // Accumulate WHERE clicks land within their target (relative 0..1 offset),
+    // across all pages. Low variance over many clicks ⇒ scripted fixed offset.
+    function recordClickPlacement(e) {
+      var off;
+      try {
+        var r = e.target.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) return;
+        off = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+      } catch (x) { return; }
+      if (off.x < 0 || off.x > 1 || off.y < 0 || off.y > 1) return; // click outside target box
+      if (!state.clicks) state.clicks = [];
+      state.clicks.push(off);
+      if (state.clicks.length > 50) state.clicks.shift();
+      lastSaveMs = 0; save(); // clicks are rare — persist immediately
+      postClickPattern();
+    }
+    function clickPattern() {
+      var cs = state.clicks || [], n = cs.length;
+      if (!n) return { count: 0, stdevX: 0, stdevY: 0, meanX: 0, meanY: 0, exactCenterCount: 0 };
+      var mx = 0, my = 0, ec = 0;
+      cs.forEach(function (c) { mx += c.x; my += c.y; if (Math.abs(c.x - 0.5) < 0.01 && Math.abs(c.y - 0.5) < 0.01) ec++; });
+      mx /= n; my /= n;
+      var vx = 0, vy = 0;
+      cs.forEach(function (c) { vx += (c.x - mx) * (c.x - mx); vy += (c.y - my) * (c.y - my); });
+      return { count: n, meanX: mx, meanY: my, stdevX: Math.sqrt(vx / n), stdevY: Math.sqrt(vy / n), exactCenterCount: ec };
+    }
+    function postClickPattern() {
+      var t = tnow(); if (t - lastCPMs < 250) return; lastCPMs = t;
+      if (!BOOT.sessionId) return;
+      post("clickpattern", { clickPattern: clickPattern() }).then(function (rep) { if (rep) renderSidebar(rep); });
     }
     function onKeyDown(e) {
       if (fromSidebar(e)) return;
@@ -425,7 +457,7 @@
       el.innerHTML = h;
     }
     function reset() {
-      state = { total: 0, suspicious: 0, reasons: {}, startMs: tnow() };
+      state = { total: 0, suspicious: 0, reasons: {}, startMs: tnow(), clicks: [] };
       keyTimes = []; lastSaveMs = 0;
       try { sessionStorage.removeItem(KEY); } catch (e) {}
       render();

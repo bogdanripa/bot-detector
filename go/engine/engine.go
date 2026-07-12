@@ -58,7 +58,8 @@ var checkIndex = map[string]int{
 	"playwright_bindings": 63, "phantom_globals": 64, "node_globals": 65, "cdp_runtime_enable": 66,
 	"anti_tamper_patched": 67,
 	// client-side live behavior — confidence grows as the user acts (high)
-	"scroll_teleport": 82, "click_no_trail": 84, "behavior_scripted": 86, "clean_env_agentic_behavior": 88,
+	"scroll_teleport": 82, "click_position_pattern": 83, "click_no_trail": 84,
+	"behavior_scripted": 86, "clean_env_agentic_behavior": 88,
 }
 
 // realtimeAgentTokens are UA substrings of on-demand, user-triggered AI fetchers
@@ -399,6 +400,33 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 		}
 	} else {
 		recordConf("click_no_trail", "pending", "awaiting the landing-page link click", 0)
+	}
+	// Click placement: WHERE clicks land within their target, across every click.
+	// A human hits scattered spots; a bot tends to a fixed relative offset (often
+	// dead-center). One click can't tell — confidence grows with click count.
+	if cp := ss.ClickPattern; cp == nil || cp.Count == 0 {
+		recordConf("click_position_pattern", "pending", "awaiting clicks to watch placement", 0)
+	} else {
+		conf := float64(cp.Count) / 4.0 // ~4 clicks ⇒ confident
+		if conf > 1 {
+			conf = 1
+		}
+		fixedOffset := cp.StdevX < 0.02 && cp.StdevY < 0.02
+		allCentered := cp.ExactCenterCount == cp.Count
+		switch {
+		case cp.Count < 3:
+			recordConf("click_position_pattern", "inconclusive",
+				"only "+itoa(cp.Count)+" click(s) so far ("+pct(conf)+" confidence)", conf)
+		case allCentered:
+			fireConf("click_position_pattern", "fail",
+				"every click at exact element center ("+pct(conf)+" confidence)", conf)
+		case fixedOffset:
+			fireConf("click_position_pattern", "fail",
+				"clicks fixed at ~"+pct(cp.MeanX)+","+pct(cp.MeanY)+" of the target ("+pct(conf)+" confidence)", conf)
+		default:
+			recordConf("click_position_pattern", "pass",
+				"varied click placement over "+itoa(cp.Count)+" clicks ("+pct(conf)+" confidence)", conf)
+		}
 	}
 	// Typing cadence: confidence grows with observed keystrokes (~12 ⇒ certain),
 	// so the check moves pending → inconclusive → pass/fail live as you type.

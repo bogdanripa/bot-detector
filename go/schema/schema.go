@@ -13,6 +13,7 @@ type ClientPayload struct {
 	LinkClick     *LinkClick    `json:"linkClick,omitempty"`
 	Behavior      *Behavior     `json:"behavior,omitempty"`
 	Traps         *Traps        `json:"traps,omitempty"`
+	ClickPattern  *ClickPattern `json:"clickPattern,omitempty"`
 }
 
 // Layer1 — client-asserted browser-environment signals (claims, checked by the engine).
@@ -112,6 +113,18 @@ type LinkClick struct {
 	SourceCapabilitiesPresent bool `json:"sourceCapabilitiesPresent"`
 }
 
+// ClickPattern — WHERE clicks land within their target, accumulated across all
+// clicks in the session (cross-page). Bots often click a fixed relative offset
+// (e.g. always dead-center) — low variance across many clicks is the tell.
+type ClickPattern struct {
+	Count            int     `json:"count"`            // clicks observed
+	StdevX           float64 `json:"stdevX"`           // stdev of relative x-offset (0..1) within targets
+	StdevY           float64 `json:"stdevY"`           // stdev of relative y-offset
+	MeanX            float64 `json:"meanX"`            // mean relative x-offset
+	MeanY            float64 `json:"meanY"`            // mean relative y-offset
+	ExactCenterCount int     `json:"exactCenterCount"` // clicks landing at exact 50%/50%
+}
+
 // Behavior — form-fill dynamics (docs/04 §2.8). Dynamics only, never field values.
 type Behavior struct {
 	DurationMs            int         `json:"durationMs"`
@@ -195,6 +208,7 @@ type SignalSet struct {
 	Behavior     *Behavior
 	Traps        *Traps
 	Funnel       *FunnelState
+	ClickPattern *ClickPattern
 }
 
 // ---- Report (engine output, docs/03 §5) ----
