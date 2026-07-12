@@ -650,6 +650,10 @@ var checksTmpl = template.Must(template.New("checks").Parse(`
   .bds-checks td { border-top: 1px solid #8883; padding: .35rem .25rem; vertical-align: top; }
   .bds-badge { color: #fff; font-size: .62rem; font-weight: 700; padding: .1rem .35rem; border-radius: 4px; }
   .bds-conf { display: inline-block; margin-top: .18rem; font-size: .6rem; color: #888; white-space: nowrap; }
+  .bds-loc { font-size: .54rem; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+              padding: .04rem .3rem; border-radius: 3px; vertical-align: middle; }
+  .bds-loc-server { background: #3b82f628; color: #3b82f6; }
+  .bds-loc-client { background: #14b8a628; color: #0d9488; }
   .bds-allow { border: 1px solid #1a7f37; background: #1a7f371a; color: #1a7f37; border-radius: 8px;
               padding: .45rem .7rem; margin-bottom: .8rem; font-size: .82rem; font-weight: 600; }
   .bds-exp { color: #888; font-size: .78rem; }
@@ -682,7 +686,7 @@ var checksTmpl = template.Must(template.New("checks").Parse(`
   <table class="bds-checks">
   {{range .Checks}}<tr>
     <td><span class="bds-badge" style="background:{{.Color}}">{{.Badge}}</span>{{if .ShowConf}}<br><span class="bds-conf">{{.ConfPct}}%</span>{{end}}</td>
-    <td><b>{{.Title}}</b><br><span class="bds-exp">{{.Explanation}}</span></td>
+    <td><b>{{.Title}}</b> <span class="bds-loc bds-loc-{{.Side}}">{{.Side}}</span><br><span class="bds-exp">{{.Explanation}}</span></td>
     <td class="bds-val">{{.Value}}</td>
   </tr>{{end}}
   </table>
@@ -701,6 +705,16 @@ type findingView struct {
 	Badge, Color string
 	ShowConf     bool
 	ConfPct      int
+	Side         string // "server" | "client"
+}
+
+// checkSide maps a check's index band to where it is evaluated. Index < 50 =
+// server-side (headers/TLS/IP/funnel); >= 50 = client-side (browser env, behavior).
+func checkSide(index int) string {
+	if index < 50 {
+		return "server"
+	}
+	return "client"
 }
 
 var badgeLabels = map[string]string{"pass": "PASS", "warn": "WARN", "fail": "FAIL",
@@ -733,7 +747,7 @@ func renderChecksHTML(report schema.Report) string {
 		}
 		// Show a live confidence figure for the behavioral checks (index >= 80),
 		// which is the set that evolves as the user acts.
-		fv := findingView{Finding: c, Badge: b, Color: cl}
+		fv := findingView{Finding: c, Badge: b, Color: cl, Side: checkSide(c.Index)}
 		if c.Index >= 80 {
 			fv.ShowConf = true
 			fv.ConfPct = int(c.Confidence*100 + 0.5)

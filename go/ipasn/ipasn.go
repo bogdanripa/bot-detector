@@ -188,14 +188,28 @@ var hostingASNs = map[int]bool{
 	9009:  true, 60068: true, // M247
 	45102: true, 37963: true, // Alibaba
 	132203: true, 45090: true, // Tencent
-	60781: true, // LeaseWeb
+	60781:  true,               // LeaseWeb
+	62240:  true,               // Clouvider
+	3223:   true,               // Voxility
+	199524: true, 202422: true, // G-Core
+	49981:  true, // WorldStream
+	53667:  true, // FranTech / BuyVM
+	36352:  true, // ColoCrossing
+	40676:  true, // Psychz
+	46844:  true, // Sharktech
+	29802:  true, // Hivelocity
+	8100:   true, // QuadraNet
+	51852:  true, // Private Layer
+	212238: true, // Datacamp / CDN77
 }
 
 var hostingKeywords = []string{
 	"amazon", "aws", "google", "cloud", "microsoft", "azure", "ovh", "hetzner",
 	"digitalocean", "linode", "akamai", "vultr", "choopa", "scaleway", "oracle",
 	"alibaba", "tencent", "contabo", "leaseweb", "m247", "hosting", "datacenter",
-	"data center", "vps", "dedicated server", "colo", "servers",
+	"data center", "vps", "dedicated server", "colo", "server", "host",
+	"clouvider", "voxility", "g-core", "gcore", "worldstream", "buyvm", "frantech",
+	"colocation", "vpn", "proxy", "cdn",
 }
 var mobileKeywords = []string{"mobile", "wireless", "cellular", "gsm", "lte"}
 

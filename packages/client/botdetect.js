@@ -482,8 +482,9 @@
       var badge = STATUS_LABEL[c.status] || c.status;
       var col = STATUS_COLOR[c.status] || "#555";
       var conf = (c.index >= 80) ? '<br><span class="bds-conf">' + Math.round((c.confidence || 0) * 100) + "%</span>" : "";
+      var side = (c.index < 50) ? "server" : "client";
       h += '<tr><td><span class="bds-badge" style="background:' + col + '">' + esc(badge) + "</span>" + conf + "</td>";
-      h += "<td><b>" + esc(c.title) + '</b><br><span class="bds-exp">' + esc(c.explanation) + "</span></td>";
+      h += "<td><b>" + esc(c.title) + '</b> <span class="bds-loc bds-loc-' + side + '">' + side + '</span><br><span class="bds-exp">' + esc(c.explanation) + "</span></td>";
       h += '<td class="bds-val">' + esc(c.value || "") + "</td></tr>";
     });
     h += "</table>";
