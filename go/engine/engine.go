@@ -180,7 +180,8 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 		f := schema.Finding{ID: id, Title: def.Title, Explanation: def.Explanation,
 			Severity: def.Severity, Weight: def.Weight, Value: value, Status: "fail",
 			Index: checkIndex[id], Confidence: 1.0}
-		contradictions = append(contradictions, f)
+		contradictions = append(contradictions, f) // headline "why" at the top
+		checks = append(checks, f)                  // AND in the full checklist below
 		if id == "tls_ua_vendor_mismatch" || id == "header_order_is_library" {
 			transportAccum += def.Weight
 		} else {
