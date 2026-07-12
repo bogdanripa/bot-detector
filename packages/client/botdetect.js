@@ -410,6 +410,12 @@
       else h += '<div class="bds-live-ok">No automation tells in your activity yet.</div>';
       el.innerHTML = h;
     }
+    function reset() {
+      state = { total: 0, suspicious: 0, reasons: {}, startMs: tnow() };
+      keyTimes = []; lastSaveMs = 0;
+      try { sessionStorage.removeItem(KEY); } catch (e) {}
+      render();
+    }
     function start() {
       if (started) return; started = true;
       load();
@@ -427,7 +433,7 @@
       setInterval(render, 500);
       render();
     }
-    return { start: start, render: render, snapshot: function () { return state; } };
+    return { start: start, render: render, reset: reset, snapshot: function () { return state; } };
   })();
 
   // ---------- debug sidebar (server-rendered; re-rendered here when new
@@ -438,7 +444,8 @@
     var sc = report.score;
     var color = { human: "#1a7f37", suspicious: "#bf8700", automated: "#cf222e" }[sc.band] || "#555";
     var icon = { human: "✓", suspicious: "⚠", automated: "✗" }[sc.band] || "";
-    var h = "<h2>Live report — checks so far</h2>";
+    var h = '<div class="bds-head"><h2>Live report — checks so far</h2>' +
+      '<button class="bds-reset" type="button" title="Clear the running tally and start a fresh session">Reset</button></div>';
     h += '<div class="bds-live" id="bds-live"></div>';
     h += '<div class="bds-banner" style="border-color:' + color + '">';
     h += '<div class="bds-pct" style="color:' + color + '">' + sc.percent + "%</div><div>";
@@ -498,6 +505,14 @@
     initSidebarResize();
     initSidebarToggle();
     behaviorMonitor.start(); // watch everything, every page, regardless of step
+    // Reset button (delegated so it survives sidebar re-renders): clear the
+    // client tally, then hit /reset to drop the server session and start clean.
+    document.addEventListener("click", function (e) {
+      if (e.target && e.target.closest && e.target.closest(".bds-reset")) {
+        behaviorMonitor.reset();
+        location.href = "/reset?to=/" + (BOOT.mode || "debug");
+      }
+    }, true);
     if (BOOT.step === "landing") {
       var passive = null;
       collectPassive().then(function (l1) {

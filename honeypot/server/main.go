@@ -94,6 +94,7 @@ func main() {
 		}(base))
 	}
 	mux.HandleFunc("/test/forbidden", handleForbidden)
+	mux.HandleFunc("/reset", handleReset)
 	mux.HandleFunc("/api/analyze", handleAnalyze)
 	mux.HandleFunc("/botdetect.js", handleClientJS)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
@@ -320,6 +321,24 @@ func handleForbidden(w http.ResponseWriter, r *http.Request) {
 	serveForbidden(w, http.StatusOK, "visited")
 }
 
+// handleReset drops the server-side session and clears the cookie, then sends
+// the visitor back to a clean landing. The client clears its own behavioral
+// tally before navigating here (botdetect.js), so it's a full "start over".
+func handleReset(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie("bd_sid"); err == nil {
+		sessMu.Lock()
+		delete(sessions, c.Value)
+		sessMu.Unlock()
+	}
+	http.SetCookie(w, &http.Cookie{Name: "bd_sid", Value: "", Path: "/", MaxAge: -1,
+		HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode})
+	dest := r.URL.Query().Get("to")
+	if dest != "/test" {
+		dest = "/debug"
+	}
+	http.Redirect(w, r, dest, http.StatusSeeOther)
+}
+
 // funnelHandler serves one step of the funnel for a given mode.
 //   - test mode: server-side 403 when server-only signals are conclusively a bot;
 //     the result step 403s when the full verdict is automated, else shows success.
@@ -494,7 +513,12 @@ var checksTmpl = template.Must(template.New("checks").Parse(`
   .bds-side::before { content: ""; position: fixed; top: 0; bottom: 0; right: calc(var(--bds-w, 400px) - 5px);
               width: 10px; cursor: ew-resize; z-index: 10000; }
   body.bds-collapsed .bds-side::before { display: none; }
-  .bds-side h2 { font-size: 1.02rem; margin: .2rem 0 .8rem; }
+  .bds-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin: .2rem 0 .8rem; }
+  .bds-head h2 { font-size: 1.02rem; margin: 0; }
+  .bds-reset { font: inherit; font-size: .72rem; font-weight: 600; padding: .2rem .55rem; border: 1px solid #8886;
+              border-radius: 6px; background: transparent; color: inherit; cursor: pointer; white-space: nowrap; }
+  .bds-reset:hover { background: #8881; }
+  .bds-side h2 { font-size: 1.02rem; }
   .bds-banner { display: flex; align-items: center; gap: .8rem; border: 3px solid; border-radius: 10px;
               padding: .45rem .8rem; margin-bottom: .8rem; }
   .bds-pct { font-size: 1.9rem; font-weight: 800; }
@@ -517,7 +541,8 @@ var checksTmpl = template.Must(template.New("checks").Parse(`
   .bds-live-ok { color: #1a7f37; font-size: .78rem; margin-top: .3rem; }
 </style>
 <aside class="bds-side">
-  <h2>Live report — checks so far</h2>
+  <div class="bds-head"><h2>Live report — checks so far</h2>
+    <button class="bds-reset" type="button" title="Clear the running tally and start a fresh session">Reset</button></div>
   <div class="bds-live" id="bds-live"></div>
   <div class="bds-banner" style="border-color:{{.BandColor}}">
     <div class="bds-pct" style="color:{{.BandColor}}">{{.Percent}}%</div>
