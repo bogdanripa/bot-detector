@@ -12,10 +12,10 @@ Total cost target: **$0** — free VM + free DuckDNS domain + free Let's Encrypt
 
 | | |
 |---|---|
-| URL | <https://35.202.101.31.sslip.io/> |
+| URL | <https://bot-honey.bogdanripa.com/> (also <https://35.202.101.31.sslip.io/>) |
 | GCP | project `auto-trader-493814`, instance `honeypot`, zone `us-central1-c`, `e2-micro` |
 | IP | `35.202.101.31` — reserved static (`honeypot-ip`, us-central1) |
-| Domain | sslip.io (zero-config DNS: the hostname *is* the IP), Let's Encrypt autocert |
+| Domain | `bot-honey.bogdanripa.com` (Cloudflare A record, **DNS-only**) + `35.202.101.31.sslip.io`; `BD_DOMAIN` lists both, Let's Encrypt autocert issues a cert per host |
 | Deploy | push to this repo → `.github/workflows/deploy.yml` builds, ships over SSH as `deployer`, restarts `honeypot.service` |
 
 Secrets `DEPLOY_HOST` / `DEPLOY_SSH_KEY` / `DEPLOY_KNOWN_HOSTS` are set in the repo.

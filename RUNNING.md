@@ -107,7 +107,7 @@ proof.
 **Push-to-deploy (live):** every push to `main` runs
 [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) — tests, builds
 the static binary, ships it over SSH, restarts the service. The live instance
-is **<https://35.202.101.31.sslip.io/>** (GCP always-free `e2-micro`, details in
+is **<https://bot-honey.bogdanripa.com/>** (GCP always-free `e2-micro`, details in
 [`deploy/README.md`](deploy/README.md)).
 
 ```bash

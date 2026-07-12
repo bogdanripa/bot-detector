@@ -44,8 +44,8 @@ Detection is **two halves**: a tiny **client library** that watches the visitor
 and a **server engine** that scores what it sends. You can adopt one or both.
 The honeypot's **`/test`** mode is the complete, deployed reference — study
 [`honeypot/server/main.go`](honeypot/server/main.go) and try it live:
-**<https://35.202.101.31.sslip.io/test>** (blocks bots) ·
-**[`/debug`](https://35.202.101.31.sslip.io/debug)** (shows every check).
+**<https://bot-honey.bogdanripa.com/test>** (blocks bots) ·
+**[`/debug`](https://bot-honey.bogdanripa.com/debug)** (shows every check).
 
 ### 1. Client — one script tag
 
