@@ -75,10 +75,23 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleIndex)
 	for _, mode := range []string{"test", "debug"} {
-		mux.HandleFunc("/"+mode, funnelHandler(mode, "landing"))
-		mux.HandleFunc("/"+mode+"/form", funnelHandler(mode, "form"))
-		mux.HandleFunc("/"+mode+"/result", funnelHandler(mode, "result"))
-		mux.HandleFunc("/"+mode+"/submit", submitHandler(mode))
+		base := "/" + mode
+		mux.HandleFunc(base, funnelHandler(mode, "landing"))
+		mux.HandleFunc(base+"/form", funnelHandler(mode, "form"))
+		mux.HandleFunc(base+"/result", funnelHandler(mode, "result"))
+		mux.HandleFunc(base+"/submit", submitHandler(mode))
+		// A trailing slash (/test/, /debug/) isn't the exact registered pattern,
+		// so it would otherwise fall through to "/" and 404. Redirect it to the
+		// canonical landing. (More specific paths like /test/form still win.)
+		mux.HandleFunc(base+"/", func(base string) http.HandlerFunc {
+			return func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == base+"/" {
+					http.Redirect(w, r, base, http.StatusMovedPermanently)
+					return
+				}
+				http.NotFound(w, r)
+			}
+		}(base))
 	}
 	mux.HandleFunc("/test/forbidden", handleForbidden)
 	mux.HandleFunc("/api/analyze", handleAnalyze)
