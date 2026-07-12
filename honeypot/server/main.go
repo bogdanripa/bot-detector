@@ -459,22 +459,29 @@ type checksView struct {
 }
 
 // The panel is a fixed right sidebar on wide screens (it stays put while you
-// scroll — the scroll IS part of the check) and degrades to an inline card
-// when there is no room. Class names are bds-* to avoid colliding with the
-// result page's own bd-* report styles.
+// scroll — the scroll IS part of the check). A custom checklist-icon button
+// toggles it (state persists in localStorage), and the left edge is a drag
+// handle to resize it (both wired in botdetect.js). Class names are bds-* to
+// avoid colliding with the result page's own bd-* report styles.
 var checksTmpl = template.Must(template.New("checks").Parse(`
 <style>
-  .bds-side { box-sizing: border-box; padding: 1rem 1.1rem 2rem; border: 1px solid #8884;
-              border-radius: 12px; margin: 2rem 0; background: #fafafa;
-              font-size: .9rem; line-height: 1.45; }
+  .bds-toggle { position: fixed; top: 12px; right: 12px; z-index: 10001; width: 40px; height: 40px;
+              display: inline-flex; align-items: center; justify-content: center; padding: 0;
+              border: 1px solid #8886; border-radius: 9px; background: #fff; color: #333;
+              cursor: pointer; box-shadow: 0 1px 4px #0002; }
+  .bds-toggle:hover { background: #f0f0f0; }
+  @media (prefers-color-scheme: dark) { .bds-toggle { background: #222; color: #ddd; border-color: #fff3; }
+              .bds-toggle:hover { background: #2c2c2c; } }
+  .bds-side { position: fixed; top: 0; right: 0; bottom: 0; width: var(--bds-w, 400px); max-width: 92vw;
+              box-sizing: border-box; overflow-y: auto; padding: 3.4rem 1.1rem 2rem;
+              border-left: 1px solid #8884; background: #fafafa; font-size: .9rem; line-height: 1.45;
+              transition: transform .2s ease; z-index: 10000; }
   @media (prefers-color-scheme: dark) { .bds-side { background: #161616; } }
-  @media (min-width: 1500px) {
-    .bds-side { position: fixed; top: 0; right: 0; bottom: 0; width: var(--bds-w, 400px);
-                overflow-y: auto; border: 0; border-left: 1px solid #8884; border-radius: 0; margin: 0; }
-    /* drag handle: grab the left edge to resize (botdetect.js) */
-    .bds-side::before { content: ""; position: fixed; top: 0; bottom: 0; right: calc(var(--bds-w, 400px) - 5px);
-                width: 10px; cursor: ew-resize; }
-  }
+  body.bds-collapsed .bds-side { transform: translateX(100%); }
+  /* drag handle: grab the left edge to resize (botdetect.js) */
+  .bds-side::before { content: ""; position: fixed; top: 0; bottom: 0; right: calc(var(--bds-w, 400px) - 5px);
+              width: 10px; cursor: ew-resize; z-index: 10000; }
+  body.bds-collapsed .bds-side::before { display: none; }
   .bds-side h2 { font-size: 1.02rem; margin: .2rem 0 .8rem; }
   .bds-banner { display: flex; align-items: center; gap: .8rem; border: 3px solid; border-radius: 10px;
               padding: .45rem .8rem; margin-bottom: .8rem; }
@@ -511,7 +518,14 @@ var checksTmpl = template.Must(template.New("checks").Parse(`
   </table>
   <p class="bds-note">Captured so far: {{range $i, $c := .Captured}}{{if $i}}, {{end}}<b>{{$c}}</b>{{end}}.
   {{if .Pending}}Still to come: {{range $i, $c := .Pending}}{{if $i}}, {{end}}{{$c}}{{end}} — continue through the pages and this list grows.{{end}}</p>
-</aside>`))
+</aside>
+<button class="bds-toggle" type="button" aria-label="Toggle detection checks panel" aria-expanded="true" title="Show/hide detection checks">
+  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <polyline points="2 6 3.5 7.5 6 4.5"/><line x1="9.5" y1="6" x2="21" y2="6"/>
+    <polyline points="2 12 3.5 13.5 6 10.5"/><line x1="9.5" y1="12" x2="21" y2="12"/>
+    <polyline points="2 18 3.5 19.5 6 16.5"/><line x1="9.5" y1="18" x2="21" y2="18"/>
+  </svg>
+</button>`))
 
 // Badge/Color are derived per finding for the template.
 type findingView struct {

@@ -279,27 +279,42 @@
   }
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
 
+  // ---------- debug sidebar show/hide toggle (custom checklist icon) ----------
+  function initSidebarToggle() {
+    var btn = document.querySelector(".bds-toggle");
+    if (!btn) return;
+    var collapsed = false;
+    try { collapsed = localStorage.getItem("bds-collapsed") === "1"; } catch (e) {}
+    document.body.classList.toggle("bds-collapsed", collapsed);
+    btn.setAttribute("aria-expanded", String(!collapsed));
+    btn.addEventListener("click", function () {
+      var c = document.body.classList.toggle("bds-collapsed");
+      btn.setAttribute("aria-expanded", String(!c));
+      try { localStorage.setItem("bds-collapsed", c ? "1" : "0"); } catch (e) {}
+    });
+  }
+
   // ---------- debug sidebar resize (drag the left edge; width persists) ----------
+  // Clamp to [300px, 92vw] so a width saved on a wide monitor can't cover the
+  // whole page (and leave the drag handle off-screen) on a narrower one.
+  function clampWidth(w) { return Math.max(300, Math.min(w, Math.round(window.innerWidth * 0.92))); }
   function initSidebarResize() {
     var el = document.querySelector("aside.bds-side");
     if (!el) return;
     try {
       var saved = parseInt(localStorage.getItem("bds-w"), 10);
-      if (saved) document.documentElement.style.setProperty("--bds-w", saved + "px");
+      if (saved) document.documentElement.style.setProperty("--bds-w", clampWidth(saved) + "px");
     } catch (e) {}
     var dragging = false;
-    function fixed() { return getComputedStyle(el).position === "fixed"; }
     el.addEventListener("pointerdown", function (e) {
-      if (!fixed() || e.clientX - el.getBoundingClientRect().left > 10) return;
+      if (e.clientX - el.getBoundingClientRect().left > 10) return;
       dragging = true;
       e.preventDefault();
       document.body.style.userSelect = "none";
     });
     addEventListener("pointermove", function (e) {
       if (!dragging) return;
-      var w = Math.round(window.innerWidth - e.clientX);
-      w = Math.max(300, Math.min(w, window.innerWidth - 760));
-      document.documentElement.style.setProperty("--bds-w", w + "px");
+      document.documentElement.style.setProperty("--bds-w", clampWidth(window.innerWidth - e.clientX) + "px");
     });
     addEventListener("pointerup", function () {
       if (!dragging) return;
@@ -382,6 +397,7 @@
   function initHoneypot() {
     var link, form;
     initSidebarResize();
+    initSidebarToggle();
     if (BOOT.step === "landing") {
       var passive = null;
       collectPassive().then(function (l1) {
