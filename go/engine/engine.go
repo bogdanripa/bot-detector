@@ -137,6 +137,18 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 		})
 	}
 	pass := func(id, value string) { record(id, "pass", value) }
+	// credit records a human-confirming PASS with a NEGATIVE weight, nudging the
+	// verdict toward human as the user demonstrates real behavior (so the score
+	// responds to scrolling/clicking/typing, not just editing keys).
+	credit := func(id, value string, conf, w float64) {
+		def, ok := e.cfg.Signals[id]
+		if !ok {
+			return
+		}
+		checks = append(checks, schema.Finding{ID: id, Title: def.Title, Explanation: def.Explanation,
+			Status: "pass", Weight: w, Value: value, Index: checkIndex[id], Confidence: conf})
+		L += w
+	}
 	// recordConf records a non-weighted check with an explicit status+confidence
 	// (the live behavioral checks, which cross thresholds as the user acts).
 	recordConf := func(id, status, value string, conf float64) {
@@ -412,8 +424,8 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 		case st.ScrollEvents == 0 && !st.ReachedLink:
 			recordConf("scroll_teleport", "pending", "awaiting scroll on the landing page", 0)
 		case st.AnyUserGesture && conf >= 0.5:
-			recordConf("scroll_teleport", "pass",
-				"human scroll gesture ("+itoa(st.ScrollEvents)+" events, "+pct(conf)+" confidence)", conf)
+			credit("scroll_teleport",
+				"human scroll gesture ("+itoa(st.ScrollEvents)+" events, "+pct(conf)+" confidence)", conf, -0.6)
 		case st.AnyUserGesture:
 			recordConf("scroll_teleport", "inconclusive",
 				"scrolling by gesture ("+pct(conf)+" confidence)", conf)
@@ -431,7 +443,7 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 		} else if lc.ApproachPoints == 0 && lc.CoalescedNearby == 0 && !humanScroll {
 			fireConf("click_no_trail", "fail", "no approach trail or scroll gesture", 1.0)
 		} else {
-			recordConf("click_no_trail", "pass", "human approach (pointer trail or scroll gesture)", 1.0)
+			credit("click_no_trail", "human approach (pointer trail or scroll gesture)", 1.0, -0.6)
 		}
 	} else {
 		recordConf("click_no_trail", "pending", "awaiting the landing-page link click", 0)
@@ -459,8 +471,8 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 			fireConf("click_position_pattern", "fail",
 				"clicks fixed at ~"+pct(cp.MeanX)+","+pct(cp.MeanY)+" of the target ("+pct(conf)+" confidence)", conf)
 		default:
-			recordConf("click_position_pattern", "pass",
-				"varied click placement over "+itoa(cp.Count)+" clicks ("+pct(conf)+" confidence)", conf)
+			credit("click_position_pattern",
+				"varied click placement over "+itoa(cp.Count)+" clicks ("+pct(conf)+" confidence)", conf, -0.6)
 		}
 	}
 	// Typing cadence: confidence grows with keystrokes observed across the WHOLE
@@ -500,8 +512,8 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 			fireConf("behavior_scripted", "fail",
 				"zero-variance (robotic) typing cadence ("+pct(conf)+" confidence)", conf)
 		default:
-			recordConf("behavior_scripted", "pass",
-				"human-like typing ("+itoa(totalKeys)+" keys, "+pct(conf)+" confidence)", conf)
+			credit("behavior_scripted",
+				"human-like typing ("+itoa(totalKeys)+" keys, "+pct(conf)+" confidence)", conf, -0.8)
 		}
 	}
 	// Human editing keys: non-printing keys (Shift/Tab/Backspace/arrows/Ctrl) a
