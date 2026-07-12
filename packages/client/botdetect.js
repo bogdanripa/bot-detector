@@ -210,6 +210,13 @@
   }
 
   // ---------- form behavior (Page 2) ----------
+  // A <select>, checkbox or radio legitimately gets its value from a click with
+  // no keystrokes — only free-text fields typed with zero keys are a bot tell.
+  function isTextField(el) {
+    if (el.tagName === "TEXTAREA") return true;
+    if (el.tagName !== "INPUT") return false;
+    return ["text", "email", "search", "tel", "url", "password", "number"].indexOf((el.type || "text").toLowerCase()) >= 0;
+  }
   function instrumentForm(formEl) {
     var t0 = performance.now(), fields = {}, focusOrder = [], tabUsed = false, mouseMoves = 0, firstInteraction = null;
     function mark() { if (firstInteraction === null) firstInteraction = performance.now() - t0; }
@@ -219,6 +226,7 @@
     els.forEach(function (el) {
       var name = el.name || el.id || "field";
       var f = acc(name);
+      var textField = isTextField(el);
       el.addEventListener("focus", function () { mark(); if (focusOrder.indexOf(name) < 0) focusOrder.push(name); });
       el.addEventListener("keydown", function (e) {
         mark(); f.keydowns++;
@@ -228,7 +236,9 @@
       el.addEventListener("paste", function () { mark(); f.pasteEvents++; });
       el.addEventListener("input", function () {
         try { f.autofillPseudo = el.matches(":autofill") || el.matches(":-webkit-autofill"); } catch (e) {}
-        if (f.keydowns === 0 && f.pasteEvents === 0 && el.value && el.value.length > 0) f.filledWithoutKeys = true;
+        // Only free-text fields can be "filled without keystrokes" suspiciously;
+        // selects/checkboxes/radios are set by clicking, which is normal.
+        if (textField && f.keydowns === 0 && f.pasteEvents === 0 && el.value && el.value.length > 0) f.filledWithoutKeys = true;
       });
     });
     return function flush() {
