@@ -565,9 +565,9 @@
       '<button class="bds-reset" type="button" title="Clear the running tally and start a fresh session">Reset</button></div>';
     if (report.allow) h += '<div class="bds-allow">✓ Allowlisted — ' + esc(report.allow) + ". Enforcement bypassed.</div>";
     h += '<div class="bds-banner" style="border-color:' + color + '">';
-    h += '<div class="bds-pct" style="color:' + color + '">' + sc.percent + "%</div><div>";
+    h += '<div class="bds-pctwrap"><div class="bds-pct" style="color:' + color + '">' + sc.percent + '%</div><div class="bds-pctcap">automation</div></div><div>';
     h += '<div style="font-weight:700;color:' + color + '">' + icon + " " + esc(sc.band.toUpperCase()) + "</div>";
-    h += '<div class="bds-sub">automation probability ' + sc.percent + "% &middot; confidence " + Math.round(sc.confidence * 100) + "%";
+    h += '<div class="bds-sub">confidence ' + Math.round(sc.confidence * 100) + "%";
     if (sc.automationType && sc.automationType !== "none") h += " &middot; type: <code>" + esc(sc.automationType) + "</code>";
     h += "</div></div></div>";
     h += '<div class="bds-live" id="bds-live"></div>';

@@ -650,13 +650,15 @@ func inferType(fired map[string]bool) string {
 
 func confidence(ss schema.SignalSet, fired map[string]bool) float64 {
 	c := 0.5
+	// A single conclusive tell ⇒ high confidence immediately.
 	for _, id := range []string{"cdp_runtime_enable", "tls_ua_vendor_mismatch", "headless_ua",
-		"cdc_artifacts", "selenium_attributes"} {
+		"cdc_artifacts", "selenium_attributes", "library_user_agent", "ai_realtime_agent", "navigator_webdriver"} {
 		if fired[id] {
 			c += 0.4
 			break
 		}
 	}
+	// Signal-layer coverage (which layers we captured at all).
 	cov := 0.0
 	if ss.Layer1 != nil {
 		cov += 0.34
@@ -667,7 +669,23 @@ func confidence(ss schema.SignalSet, fired map[string]bool) float64 {
 	if ss.Layer3 != nil && ss.Layer3.Available {
 		cov += 0.33
 	}
-	c += cov * 0.2
+	c += cov * 0.18
+	// Behavioral evidence VOLUME — the more actions we've watched, the more
+	// confident the verdict, so confidence climbs as the user interacts.
+	bp := 0.0
+	if st := ss.ScrollToLink; st != nil {
+		bp += clamp01(float64(st.ScrollEvents) / 8)
+	}
+	if lc := ss.LinkClick; lc != nil && lc.Occurred {
+		bp += 1
+	}
+	if cp := ss.ClickPattern; cp != nil {
+		bp += clamp01(float64(cp.Count) / 4)
+	}
+	if t := ss.Typing; t != nil {
+		bp += clamp01(float64(t.Keys) / 12)
+	}
+	c += (bp / 4) * 0.28
 	if c > 0.98 {
 		c = 0.98
 	}
@@ -760,3 +778,13 @@ func sortChecks(c []schema.Finding) []schema.Finding {
 
 // pct formats a 0..1 confidence as a whole percent.
 func pct(f float64) string { return itoa(int(f*100+0.5)) + "%" }
+
+func clamp01(f float64) float64 {
+	if f < 0 {
+		return 0
+	}
+	if f > 1 {
+		return 1
+	}
+	return f
+}

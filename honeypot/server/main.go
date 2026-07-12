@@ -789,7 +789,9 @@ var checksTmpl = template.Must(template.New("checks").Parse(`
   .bds-side h2 { font-size: 1.02rem; }
   .bds-banner { display: flex; align-items: center; gap: .8rem; border: 3px solid; border-radius: 10px;
               padding: .45rem .8rem; margin-bottom: .8rem; }
+  .bds-pctwrap { text-align: center; line-height: 1.05; }
   .bds-pct { font-size: 1.9rem; font-weight: 800; }
+  .bds-pctcap { font-size: .52rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #999; }
   .bds-sub { color: #777; font-size: .78rem; }
   .bds-contra { padding-left: 1.1rem; margin: .4rem 0; }
   .bds-contra li { margin: .25rem 0; }
@@ -820,10 +822,13 @@ var checksTmpl = template.Must(template.New("checks").Parse(`
     <button class="bds-reset" type="button" title="Clear the running tally and start a fresh session">Reset</button></div>
   {{if .Allow}}<div class="bds-allow">✓ Allowlisted — {{.Allow}}. Enforcement bypassed.</div>{{end}}
   <div class="bds-banner" style="border-color:{{.BandColor}}">
-    <div class="bds-pct" style="color:{{.BandColor}}">{{.Percent}}%</div>
+    <div class="bds-pctwrap">
+      <div class="bds-pct" style="color:{{.BandColor}}">{{.Percent}}%</div>
+      <div class="bds-pctcap">automation</div>
+    </div>
     <div>
       <div style="font-weight:700;color:{{.BandColor}}">{{.Icon}} {{.Band}}</div>
-      <div class="bds-sub">automation probability {{.Percent}}% &middot; confidence {{.ConfidencePct}}%{{if ne .AutomationType "none"}} &middot; type: <code>{{.AutomationType}}</code>{{end}}</div>
+      <div class="bds-sub">confidence {{.ConfidencePct}}%{{if ne .AutomationType "none"}} &middot; type: <code>{{.AutomationType}}</code>{{end}}</div>
     </div>
   </div>
   <div class="bds-live" id="bds-live"></div>
