@@ -145,6 +145,17 @@
       navigator.sendBeacon(ENDPOINT, new Blob([JSON.stringify(body)], { type: "application/json" }));
     } catch (e) {}
   }
+  // postAndRender renders the sidebar from a post's report, but only if this is
+  // the LATEST post — so an earlier response arriving late (bursty typing) can't
+  // overwrite a newer one with a stale count. Each report is the full state.
+  var renderSeq = 0;
+  function postAndRender(step, extra) {
+    var mySeq = ++renderSeq;
+    return post(step, extra).then(function (rep) {
+      if (rep && mySeq === renderSeq) renderSidebar(rep);
+      return rep;
+    });
+  }
 
   // ---------- scroll + click provenance (Page 1) ----------
   function instrumentScrollAndLink(linkEl, extraFn) {
@@ -204,7 +215,7 @@
         var prov = scrollProvenance(); prov.reachedLink = false;
         var extra = { scrollToLink: prov };
         if (extraFn) Object.assign(extra, extraFn());
-        post("landing", extra).then(renderSidebar);
+        postAndRender("landing", extra);
       }, { passive: true });
     }
   }
@@ -451,7 +462,7 @@
     function postClickPattern() {
       var t = tnow(); if (t - lastCPMs < 250) return; lastCPMs = t;
       if (!BOOT.sessionId) return;
-      post("clickpattern", { clickPattern: clickPattern() }).then(function (rep) { if (rep) renderSidebar(rep); });
+      postAndRender("clickpattern", { clickPattern: clickPattern() });
     }
     function onKeyDown(e) {
       if (fromSidebar(e)) return;
@@ -614,7 +625,7 @@
         } else {
           // debug: post the passive environment snapshot right away so the
           // sidebar grows with the no-interaction client checks on page 1
-          post("landing", { layer1: l1 }).then(renderSidebar);
+          postAndRender("landing", { layer1: l1 });
           if (link) instrumentScrollAndLink(link, function () { return { layer1: passive }; });
         }
       });
@@ -624,7 +635,7 @@
         passiveF = l1;
         // debug: refresh the sidebar with this page's snapshot (also covers
         // deep-links to /debug/form where the landing post never happened)
-        if (BOOT.mode !== "test") post("form", { layer1: l1 }).then(renderSidebar);
+        if (BOOT.mode !== "test") postAndRender("form", { layer1: l1 });
       });
       form = document.querySelector("form");
       if (form) {
@@ -637,7 +648,7 @@
           var liveT = 0, liveTrail = null;
           function livePost() {
             liveT = Date.now(); clearTimeout(liveTrail); liveTrail = null;
-            post("form", { layer1: passiveF, behavior: flush(), traps: readTraps(form) }).then(renderSidebar);
+            postAndRender("form", { layer1: passiveF, behavior: flush(), traps: readTraps(form) });
           }
           function scheduleLive() {
             if (Date.now() - liveT >= 400) livePost();
