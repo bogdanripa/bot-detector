@@ -209,6 +209,9 @@ type Report struct {
 	Checks         []Finding         `json:"checks"`
 	Coverage       map[string]string `json:"coverage"`
 	Raw            map[string]any    `json:"raw,omitempty"`
+	// Allow is set (with a human reason) when the client is on the allowlist —
+	// a verified good bot or a trusted User-Agent — and enforcement is bypassed.
+	Allow string `json:"allow,omitempty"`
 }
 
 type Score struct {

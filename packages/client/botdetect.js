@@ -460,6 +460,7 @@
     var icon = { human: "✓", suspicious: "⚠", automated: "✗" }[sc.band] || "";
     var h = '<div class="bds-head"><h2>Live report — checks so far</h2>' +
       '<button class="bds-reset" type="button" title="Clear the running tally and start a fresh session">Reset</button></div>';
+    if (report.allow) h += '<div class="bds-allow">✓ Allowlisted — ' + esc(report.allow) + ". Enforcement bypassed.</div>";
     h += '<div class="bds-live" id="bds-live"></div>';
     h += '<div class="bds-banner" style="border-color:' + color + '">';
     h += '<div class="bds-pct" style="color:' + color + '">' + sc.percent + "%</div><div>";

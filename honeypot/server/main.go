@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -147,6 +148,114 @@ func redirectHTTPS(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "https://"+r.Host+r.URL.RequestURI(), http.StatusMovedPermanently)
 }
 
+// ---- allowlist: verified good bots + trusted User-Agents bypass enforcement ----
+// BD_UA_ALLOWLIST is a comma-separated list of User-Agent substrings to trust.
+var uaAllowlist = splitAndTrim(os.Getenv("BD_UA_ALLOWLIST"))
+
+// verifiedCrawlers maps a UA token to the reverse-DNS suffixes its IPs must
+// resolve to (forward-confirmed) — the standard way to verify a good crawler,
+// since the UA string alone is trivially spoofable.
+var verifiedCrawlers = []struct {
+	token    string
+	suffixes []string
+}{
+	{"Googlebot", []string{".googlebot.com", ".google.com"}},
+	{"AdsBot-Google", []string{".googlebot.com", ".google.com"}},
+	{"bingbot", []string{".search.msn.com"}},
+	{"DuckDuckBot", []string{".duckduckgo.com"}},
+	{"Applebot", []string{".applebot.apple.com"}},
+	{"YandexBot", []string{".yandex.com", ".yandex.net", ".yandex.ru"}},
+}
+
+var (
+	rdnsMu    sync.Mutex
+	rdnsCache = map[string]string{} // ip -> verified reason ("" = checked, not verified)
+)
+
+func splitAndTrim(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// allowDecision reports whether the request is allowlisted and a human reason.
+func allowDecision(r *http.Request, ip string) (bool, string) {
+	ua := r.Header.Get("User-Agent")
+	for _, sub := range uaAllowlist { // operator-trusted UA
+		if strings.Contains(ua, sub) {
+			return true, "trusted User-Agent (allowlist: " + sub + ")"
+		}
+	}
+	if httpcapture.HasWebBotAuth(r) { // RFC 9421 signed agent
+		agent := r.Header.Get("Signature-Agent")
+		if agent == "" {
+			agent = "signed"
+		}
+		return true, "Web Bot Auth signature (" + agent + ")"
+	}
+	if reason := verifiedCrawler(ua, ip); reason != "" { // rDNS forward-confirm
+		return true, reason
+	}
+	return false, ""
+}
+
+func verifiedCrawler(ua, ip string) string {
+	var suffixes []string
+	var token string
+	for _, c := range verifiedCrawlers {
+		if strings.Contains(ua, c.token) {
+			suffixes, token = c.suffixes, c.token
+			break
+		}
+	}
+	if suffixes == nil || ip == "" {
+		return ""
+	}
+	rdnsMu.Lock()
+	cached, ok := rdnsCache[ip]
+	rdnsMu.Unlock()
+	if ok {
+		return cached
+	}
+	reason := ""
+	if host := rdnsForwardConfirm(ip, suffixes); host != "" {
+		reason = "verified " + token + " (rDNS " + host + ")"
+	}
+	rdnsMu.Lock()
+	rdnsCache[ip] = reason
+	rdnsMu.Unlock()
+	return reason
+}
+
+// rdnsForwardConfirm resolves ip→name, checks the suffix, then name→ip to confirm.
+func rdnsForwardConfirm(ip string, suffixes []string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	names, err := net.DefaultResolver.LookupAddr(ctx, ip)
+	if err != nil {
+		return ""
+	}
+	for _, name := range names {
+		n := strings.TrimSuffix(strings.ToLower(name), ".")
+		for _, suf := range suffixes {
+			if strings.HasSuffix(n, suf) {
+				if addrs, err := net.DefaultResolver.LookupHost(ctx, name); err == nil {
+					for _, a := range addrs {
+						if a == ip {
+							return n
+						}
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
 // ---- asset loading: embedded by default, disk override for dev ----
 
 func readScoring() ([]byte, error) {
@@ -191,6 +300,7 @@ type session struct {
 	TokenActivated   bool
 	LastSecFetchUser string
 	LastReferer      string
+	Allow            string // allowlist reason (verified good bot / trusted UA); "" = not allowlisted
 }
 
 var (
@@ -349,11 +459,18 @@ func funnelHandler(mode, step string) http.HandlerFunc {
 		s.Mode = mode
 		captureConn(s, r, step)
 
+		// Allowlist: verified good bots / trusted UAs bypass enforcement entirely.
+		allowed, allowReason := allowDecision(r, s.Layer3.IP)
+		s.Allow = allowReason
+
 		// TEST MODE — server-side gate (before any client JS runs).
-		if mode == "test" && serverOnlyBot(s) {
+		if mode == "test" && !allowed && serverOnlyBot(s) {
 			log.Printf("403 %s (server-only bot) ua=%q", r.URL.Path, short(r.Header.Get("User-Agent")))
 			serveForbidden(w, http.StatusForbidden, "server-only")
 			return
+		}
+		if allowed && mode == "test" {
+			log.Printf("allow %s (%s) ua=%q", r.URL.Path, allowReason, short(r.Header.Get("User-Agent")))
 		}
 
 		boot := map[string]any{"reportVersion": "1", "sessionId": s.ID, "step": step, "mode": mode,
@@ -370,6 +487,7 @@ func funnelHandler(mode, step string) http.HandlerFunc {
 		if mode == "debug" {
 			report := eng.Score(s.signalSet())
 			report.Step = step
+			report.Allow = allowReason
 			checksHTML = renderChecksHTML(report)
 		}
 
@@ -382,10 +500,11 @@ func funnelHandler(mode, step string) http.HandlerFunc {
 			report := eng.Score(s.signalSet())
 			report.Step = "result"
 			report.GeneratedAtMs = nowMs()
+			report.Allow = allowReason
 			report.Raw = rawEcho(s)
 			boot["report"] = report
 			if mode == "test" {
-				if bandRank(report.Score.Band) >= bandRank(enforceBand) {
+				if !allowed && bandRank(report.Score.Band) >= bandRank(enforceBand) {
 					serveForbidden(w, http.StatusForbidden, "final-verdict")
 					return
 				}
@@ -463,6 +582,7 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	report := eng.Score(s.signalSet())
 	report.Step = p.Step
 	report.GeneratedAtMs = nowMs()
+	report.Allow = s.Allow // set on the funnel GET; kept for live re-renders
 	writeJSON(w, report)
 }
 
@@ -487,6 +607,7 @@ type checksView struct {
 	Band, AutomationType   string
 	BandColor, Icon        string
 	Contradictions         []schema.Finding
+	Allow                  string
 }
 
 // The panel is a fixed right sidebar on wide screens (it stays put while you
@@ -529,6 +650,8 @@ var checksTmpl = template.Must(template.New("checks").Parse(`
   .bds-checks td { border-top: 1px solid #8883; padding: .35rem .25rem; vertical-align: top; }
   .bds-badge { color: #fff; font-size: .62rem; font-weight: 700; padding: .1rem .35rem; border-radius: 4px; }
   .bds-conf { display: inline-block; margin-top: .18rem; font-size: .6rem; color: #888; white-space: nowrap; }
+  .bds-allow { border: 1px solid #1a7f37; background: #1a7f371a; color: #1a7f37; border-radius: 8px;
+              padding: .45rem .7rem; margin-bottom: .8rem; font-size: .82rem; font-weight: 600; }
   .bds-exp { color: #888; font-size: .78rem; }
   .bds-val { font-family: ui-monospace, monospace; font-size: .7rem; color: #777;
               overflow-wrap: anywhere; width: 32%; }
@@ -544,6 +667,7 @@ var checksTmpl = template.Must(template.New("checks").Parse(`
 <aside class="bds-side">
   <div class="bds-head"><h2>Live report — checks so far</h2>
     <button class="bds-reset" type="button" title="Clear the running tally and start a fresh session">Reset</button></div>
+  {{if .Allow}}<div class="bds-allow">✓ Allowlisted — {{.Allow}}. Enforcement bypassed.</div>{{end}}
   <div class="bds-live" id="bds-live"></div>
   <div class="bds-banner" style="border-color:{{.BandColor}}">
     <div class="bds-pct" style="color:{{.BandColor}}">{{.Percent}}%</div>
@@ -599,6 +723,7 @@ func renderChecksHTML(report schema.Report) string {
 			BandColor:      bandColor[report.Score.Band],
 			Icon:           icon[report.Score.Band],
 			Contradictions: report.Contradictions,
+			Allow:          report.Allow,
 		},
 	}
 	for _, c := range report.Checks {

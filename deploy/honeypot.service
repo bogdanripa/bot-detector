@@ -15,6 +15,9 @@ Environment=BD_ADDR=:443
 Environment=BD_DOMAIN=CHANGE-ME.duckdns.org
 Environment=BD_CERT_CACHE=/opt/honeypot/certs
 Environment=BD_ENFORCE_BAND=suspicious
+# Optional: trusted User-Agent substrings that bypass /test enforcement.
+# (Verified good bots — Googlebot/Bingbot via rDNS, Web Bot Auth — are always allowed.)
+# Environment=BD_UA_ALLOWLIST=MyMonitor/1.0,UptimeRobot
 # Optional full IP→ASN coverage (see deploy/README.md):
 # Environment=BD_IPASN_TSV=/opt/honeypot/ip2asn-v4.tsv.gz
 
