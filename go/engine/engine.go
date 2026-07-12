@@ -48,6 +48,7 @@ func New(configJSON []byte) (*Engine, error) {
 var checkIndex = map[string]int{
 	// server-side transport / network / funnel (low)
 	"ip_datacenter": 10, "tls_ua_vendor_mismatch": 12, "header_order_is_library": 14,
+	"library_user_agent": 18,
 	"missing_client_hints": 20, "missing_sec_fetch": 21, "minimal_accept": 22, "headless_ua": 24,
 	"ai_realtime_agent": 26,
 	"funnel_bypass": 30, "cross_nav_inconsistency": 31,
@@ -66,6 +67,16 @@ var checkIndex = map[string]int{
 // (NOT indexing crawlers). These are treated as automation; indexing crawlers
 // are allowlisted separately in the honeypot.
 var realtimeAgentTokens = []string{"ChatGPT-User", "Perplexity-User", "Claude-User", "Meta-ExternalFetcher"}
+
+// libraryUATokens are User-Agent substrings of HTTP libraries / CLI tools that
+// self-identify as non-browsers (honest bots — no browser claim to contradict).
+var libraryUATokens = []string{
+	"curl/", "Wget/", "python-requests", "python-urllib", "aiohttp", "httpx", "urllib3",
+	"Go-http-client", "okhttp", "Java/", "libwww", "lwp", "axios/", "node-fetch", "undici",
+	"got (", "HTTPie", "PostmanRuntime", "Insomnia", "Scrapy", "Apache-HttpClient",
+	"GuzzleHttp", "Faraday", "RestSharp", "Deno/", "Bun/", "PHP/", "Ruby", "WinHttp",
+	"PowerShell", "mechanize", "http.rb", "reqwest", "hyper/",
+}
 
 // firstContains returns the first substring present in s, or "".
 func firstContains(s string, subs []string) string {
@@ -297,6 +308,15 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 
 	// ---- Layer 2 rules ----
 	if l2 := ss.Layer2; l2 != nil {
+		// Self-identified non-browser UA (curl/wget/requests/…) or empty — an
+		// honest bot. Distinct from the "claims a browser but lies" checks below.
+		if l2.UserAgent == "" {
+			fire("library_user_agent", "empty User-Agent")
+		} else if tok := firstContains(l2.UserAgent, libraryUATokens); tok != "" {
+			fire("library_user_agent", tok)
+		} else {
+			pass("library_user_agent", shortUA(l2.UserAgent))
+		}
 		// HeadlessChrome is right in the request User-Agent header — a pure
 		// server-side check, no browser JS needed.
 		if strings.Contains(l2.UserAgent, "HeadlessChrome") {

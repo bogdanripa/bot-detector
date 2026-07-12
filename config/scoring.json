@@ -171,6 +171,12 @@
       "status": "pass",
       "title": "Human editing keys",
       "explanation": "Non-printing keys a human naturally uses while typing (Shift, Tab, Backspace, arrows, Ctrl/Cmd). A script that sets values or types plain characters won't emit these."
+    },
+    "library_user_agent": {
+      "weight": 3.0,
+      "status": "fail",
+      "title": "Non-browser User-Agent",
+      "explanation": "The User-Agent is a known HTTP library or CLI tool (curl, wget, requests, Go, Java, PowerShell...) or is empty \u2014 a self-identified non-browser client."
     }
   },
   "contradictions": {
