@@ -630,14 +630,18 @@
       if (form) {
         var flush = instrumentForm(form);
         if (BOOT.mode !== "test") {
-          // Live typing: re-post behavior as the user types (throttled) so the
-          // behavior_scripted check moves pending → inconclusive → pass/fail on
-          // screen instead of sitting at "awaiting form typing" until submit.
-          var liveT = 0;
-          form.addEventListener("input", function () {
-            var now = Date.now();
-            if (now - liveT < 400) return; liveT = now;
+          // Live typing: re-post behavior as the user types (throttled, with a
+          // trailing post) so behavior_scripted / human_edit_keys move on screen
+          // instead of sitting at "awaiting form typing" — and the final counts
+          // land even when input arrives in a burst.
+          var liveT = 0, liveTrail = null;
+          function livePost() {
+            liveT = Date.now(); clearTimeout(liveTrail); liveTrail = null;
             post("form", { layer1: passiveF, behavior: flush(), traps: readTraps(form) }).then(renderSidebar);
+          }
+          form.addEventListener("input", function () {
+            if (Date.now() - liveT >= 400) livePost();
+            else if (!liveTrail) liveTrail = setTimeout(livePost, 400);
           }, true);
         }
         form.addEventListener("submit", function (e) {
