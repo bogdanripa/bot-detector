@@ -463,31 +463,24 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 				"varied click placement over "+itoa(cp.Count)+" clicks ("+pct(conf)+" confidence)", conf)
 		}
 	}
-	// Typing cadence: confidence grows with observed keystrokes (~12 ⇒ certain),
-	// so the check moves pending → inconclusive → pass/fail live as you type.
+	// Typing cadence: confidence grows with keystrokes observed across the WHOLE
+	// session (ss.Typing accumulates cross-page), so it never resets between
+	// pages. Autofill is read per-form from Behavior.
 	{
-		b := ss.Behavior
-		totalKeys, noKeyFill, metronomic, autofilled := 0, false, false, false
-		reasons := []string{}
-		if b != nil {
+		t := ss.Typing
+		totalKeys, metronomic, noKeyFill := 0, false, false
+		if t != nil {
+			totalKeys = t.Keys
+			metronomic = t.Intervals >= 5 && t.InterKeyStdev < 8
+			noKeyFill = t.NoKeyFill
+		}
+		autofilled := false
+		if b := ss.Behavior; b != nil {
 			for _, f := range b.Fields {
-				totalKeys += f.Keydowns
 				if f.AutofillPseudo {
 					autofilled = true
 				}
-				if f.FilledWithoutKeys && !f.AutofillPseudo {
-					noKeyFill = true
-					reasons = append(reasons, f.Name+":no-keys")
-				}
-				if f.Keydowns >= 4 && f.InterKeyStdev < 3 {
-					metronomic = true
-					reasons = append(reasons, f.Name+":metronomic")
-				}
 			}
-		}
-		subFast := b != nil && b.FillToSubmitMs > 0 && b.FillToSubmitMs < 400 && totalKeys > 0
-		if subFast {
-			reasons = append(reasons, "sub-400ms fill")
 		}
 		conf := float64(totalKeys) / 12.0
 		if conf > 1 {
@@ -495,36 +488,33 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 		}
 		switch {
 		case noKeyFill:
-			// values appeared with no keystrokes at all — a strong tell regardless of count
-			fireConf("behavior_scripted", "fail", strings.Join(reasons, ","), 0.9)
+			fireConf("behavior_scripted", "fail", "values set with no keystrokes", 0.9)
 		case totalKeys == 0 && autofilled:
-			// legitimately filled by the browser's autofill — nothing to fault,
-			// but there is no typing cadence to analyze.
 			recordConf("behavior_scripted", "inconclusive", "filled by browser autofill — no typing to analyze", 0.3)
 		case totalKeys == 0:
 			recordConf("behavior_scripted", "pending", "awaiting form typing", 0)
 		case conf < 0.5:
 			recordConf("behavior_scripted", "inconclusive",
 				"not enough typing yet ("+itoa(totalKeys)+" keys, "+pct(conf)+" confidence)", conf)
-		case metronomic || subFast:
+		case metronomic:
 			fireConf("behavior_scripted", "fail",
-				strings.Join(reasons, ",")+" ("+pct(conf)+" confidence)", conf)
+				"zero-variance (robotic) typing cadence ("+pct(conf)+" confidence)", conf)
 		default:
 			recordConf("behavior_scripted", "pass",
 				"human-like typing ("+itoa(totalKeys)+" keys, "+pct(conf)+" confidence)", conf)
 		}
 	}
 	// Human editing keys: non-printing keys (Shift/Tab/Backspace/arrows/Ctrl) a
-	// person uses while typing. Their presence is positive evidence of a human —
-	// fires with a NEGATIVE weight (pulls the verdict toward human).
-	if b := ss.Behavior; b == nil {
+	// person uses while typing — accumulated across all pages. Positive evidence
+	// of a human, fired with a NEGATIVE weight (pulls the verdict toward human).
+	if t := ss.Typing; t == nil || (t.Keys == 0 && t.EditKeys == 0) {
 		recordConf("human_edit_keys", "pending", "awaiting typing", 0)
-	} else if b.EditKeys > 0 {
+	} else if t.EditKeys > 0 {
 		kinds := "keys"
-		if len(b.EditKeyKinds) > 0 {
-			kinds = strings.Join(b.EditKeyKinds, ", ")
+		if len(t.EditKeyKinds) > 0 {
+			kinds = strings.Join(t.EditKeyKinds, ", ")
 		}
-		fire("human_edit_keys", itoa(b.EditKeys)+" edit keys ("+kinds+")")
+		fire("human_edit_keys", itoa(t.EditKeys)+" edit keys ("+kinds+")")
 	} else {
 		recordConf("human_edit_keys", "inconclusive", "no editing keys seen yet", 0.3)
 	}

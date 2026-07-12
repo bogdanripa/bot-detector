@@ -425,6 +425,7 @@ type session struct {
 	Behavior         *schema.Behavior
 	Traps            *schema.Traps
 	ClickPattern     *schema.ClickPattern
+	Typing           *schema.Typing
 	Token            string
 	TokenActivated   bool
 	LastSecFetchUser string
@@ -542,7 +543,7 @@ func (s *session) signalSet() schema.SignalSet {
 		Layer1: s.Layer1, Layer2: s.Layer2, Layer3: s.Layer3,
 		ScrollToLink: s.ScrollToLink, LinkClick: s.LinkClick,
 		Behavior: s.Behavior, Traps: s.Traps, Funnel: s.funnel(),
-		ClickPattern: s.ClickPattern,
+		ClickPattern: s.ClickPattern, Typing: s.Typing,
 	}
 }
 
@@ -721,6 +722,9 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	}
 	if p.ClickPattern != nil {
 		s.ClickPattern = p.ClickPattern
+	}
+	if p.Typing != nil {
+		s.Typing = p.Typing
 	}
 	report := eng.Score(s.signalSet())
 	report.Step = p.Step

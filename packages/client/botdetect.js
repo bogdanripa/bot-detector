@@ -246,7 +246,6 @@
   }
   function instrumentForm(formEl) {
     var t0 = performance.now(), fields = {}, focusOrder = [], tabUsed = false, mouseMoves = 0, firstInteraction = null;
-    var editKeys = 0, editKinds = {};
     function mark() { if (firstInteraction === null) firstInteraction = performance.now() - t0; }
     function acc(name) { return fields[name] || (fields[name] = { name: name, keydowns: 0, inter: [], last: 0, backspaces: 0, pasteEvents: 0, filledWithoutKeys: false, autofillPseudo: false }); }
     addEventListener("mousemove", function () { mouseMoves++; }, { passive: true, capture: true });
@@ -260,14 +259,16 @@
         mark(); f.keydowns++;
         var now = performance.now(); if (f.last) f.inter.push(now - f.last); f.last = now;
         if (e.key === "Tab") tabUsed = true; if (e.key === "Backspace") f.backspaces++;
-        var kind = editKeyKind(e); if (kind) { editKeys++; editKinds[kind] = true; }
       });
       el.addEventListener("paste", function () { mark(); f.pasteEvents++; });
       el.addEventListener("input", function () {
         try { f.autofillPseudo = el.matches(":autofill") || el.matches(":-webkit-autofill"); } catch (e) {}
         // Only free-text fields can be "filled without keystrokes" suspiciously;
         // selects/checkboxes/radios are set by clicking, which is normal.
-        if (textField && f.keydowns === 0 && f.pasteEvents === 0 && el.value && el.value.length > 0) f.filledWithoutKeys = true;
+        if (textField && f.keydowns === 0 && f.pasteEvents === 0 && el.value && el.value.length > 0) {
+          f.filledWithoutKeys = true;
+          if (!f.autofillPseudo) behaviorMonitor.markNoKeyFill(); // cross-page bot .value tell
+        }
       });
     });
     return function flush() {
@@ -281,8 +282,7 @@
         durationMs: Math.round(performance.now() - t0),
         fillToSubmitMs: Math.round(performance.now() - t0),
         fields: out, focusOrder: focusOrder, tabKeyUsed: tabUsed,
-        mouseMoveEvents: mouseMoves, straightSegmentsRatio: 0, globalInterKeyStdev: 0,
-        editKeys: editKeys, editKeyKinds: Object.keys(editKinds)
+        mouseMoveEvents: mouseMoves, straightSegmentsRatio: 0, globalInterKeyStdev: 0
       };
     };
   }
@@ -388,8 +388,8 @@
   var behaviorMonitor = (function () {
     var KEY = "bd_behavior_v1";
     var state = { total: 0, suspicious: 0, reasons: {}, startMs: 0 };
-    var started = false, rafPending = false, lastSaveMs = 0, lastCPMs = 0;
-    var lastMoveMs = 0, lastScrollMs = 0, lastGestureMs = 0, lastScrollY = 0, keyTimes = [];
+    var started = false, rafPending = false, lastSaveMs = 0, lastCPMs = 0, lastTypingMs = 0;
+    var lastMoveMs = 0, lastScrollMs = 0, lastGestureMs = 0, lastScrollY = 0;
     function tnow() { return Date.now(); }
     function load() {
       try { var s = JSON.parse(sessionStorage.getItem(KEY)); if (s && typeof s.total === "number") state = s; } catch (e) {}
@@ -466,10 +466,40 @@
     }
     function onKeyDown(e) {
       if (fromSidebar(e)) return;
-      if (e.isTrusted === false) return observe(true, "synthetic keypress (isTrusted=false)");
-      keyTimes.push(tnow()); if (keyTimes.length > 8) keyTimes.shift();
-      var iv = []; for (var i = 1; i < keyTimes.length; i++) iv.push(keyTimes[i] - keyTimes[i - 1]);
-      observe(iv.length >= 5 && stdev(iv) < 8, "metronomic typing (robotic cadence)");
+      if (e.isTrusted === false) { observe(true, "synthetic keypress (isTrusted=false)"); return; }
+      var now = tnow();
+      // inter-key interval (ignore long idle/nav gaps so cross-page cadence isn't skewed)
+      if (state.lastKeyMs && now - state.lastKeyMs < 5000) {
+        (state.keyIv = state.keyIv || []).push(now - state.lastKeyMs);
+        if (state.keyIv.length > 60) state.keyIv.shift();
+      }
+      state.lastKeyMs = now;
+      var kind = editKeyKind(e);
+      if (kind) { state.editKeys = (state.editKeys || 0) + 1; (state.editKinds = state.editKinds || {})[kind] = true; }
+      else if (e.key && e.key.length === 1) { state.keys = (state.keys || 0) + 1; }
+      var recent = (state.keyIv || []).slice(-8);
+      observe(recent.length >= 5 && stdev(recent) < 8, "metronomic typing (robotic cadence)");
+      postTyping();
+    }
+    // Cross-page typing snapshot (drives Scripted-form-fill + Human-editing-keys).
+    function computeTyping() {
+      var iv = state.keyIv || [];
+      return {
+        keys: state.keys || 0, editKeys: state.editKeys || 0,
+        editKeyKinds: Object.keys(state.editKinds || {}),
+        interKeyStdev: iv.length >= 2 ? stdev(iv) : 0, intervals: iv.length,
+        noKeyFill: !!state.noKeyFill
+      };
+    }
+    function postTyping() {
+      var t = tnow(); if (t - lastTypingMs < 300) return; lastTypingMs = t;
+      if (!BOOT.sessionId) return;
+      postAndRender("typing", { typing: computeTyping() });
+    }
+    // Called by the form when a text field gets a value with no keystrokes.
+    function markNoKeyFill() {
+      if (state.noKeyFill) return;
+      state.noKeyFill = true; lastSaveMs = 0; save(); postTyping();
     }
     function onGesture(e) { lastGestureMs = tnow(); if (e.isTrusted === false) observe(true, "synthetic " + e.type); }
     function onMove(e) {
@@ -497,8 +527,9 @@
       el.innerHTML = h;
     }
     function reset() {
-      state = { total: 0, suspicious: 0, reasons: {}, startMs: tnow(), clicks: [] };
-      keyTimes = []; lastSaveMs = 0;
+      state = { total: 0, suspicious: 0, reasons: {}, startMs: tnow(), clicks: [],
+        keys: 0, editKeys: 0, editKinds: {}, keyIv: [], noKeyFill: false, lastKeyMs: 0 };
+      lastSaveMs = 0;
       try { sessionStorage.removeItem(KEY); } catch (e) {}
       render();
     }
@@ -519,7 +550,7 @@
       setInterval(render, 500);
       render();
     }
-    return { start: start, render: render, reset: reset, snapshot: function () { return state; } };
+    return { start: start, render: render, reset: reset, markNoKeyFill: markNoKeyFill, snapshot: function () { return state; } };
   })();
 
   // ---------- debug sidebar (server-rendered; re-rendered here when new
@@ -654,11 +685,10 @@
             if (Date.now() - liveT >= 400) livePost();
             else if (!liveTrail) liveTrail = setTimeout(livePost, 400);
           }
+          // Posts per-form Behavior (autofill/fields/fill-time). Keystroke and
+          // edit-key accumulation is cross-page in behaviorMonitor (posts Typing
+          // on keydown), so special keys refresh the panel through that path.
           form.addEventListener("input", scheduleLive, true);
-          // Special keys (Shift/Tab/arrows/Ctrl/Backspace) don't fire 'input' but
-          // do change the edit-key count — refresh on keydown too. Bubble phase,
-          // so it runs after the per-field handler that increments the count.
-          form.addEventListener("keydown", scheduleLive);
         }
         form.addEventListener("submit", function (e) {
           var payload = { layer1: passiveF, behavior: flush(), traps: readTraps(form) };

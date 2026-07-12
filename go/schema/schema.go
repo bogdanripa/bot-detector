@@ -14,6 +14,7 @@ type ClientPayload struct {
 	Behavior      *Behavior     `json:"behavior,omitempty"`
 	Traps         *Traps        `json:"traps,omitempty"`
 	ClickPattern  *ClickPattern `json:"clickPattern,omitempty"`
+	Typing        *Typing       `json:"typing,omitempty"`
 }
 
 // Layer1 — client-asserted browser-environment signals (claims, checked by the engine).
@@ -111,6 +112,17 @@ type LinkClick struct {
 	AtExactIntegerCenter      bool `json:"atExactIntegerCenter"`
 	DwellBeforeClickMs        int  `json:"dwellBeforeClickMs"`
 	SourceCapabilitiesPresent bool `json:"sourceCapabilitiesPresent"`
+}
+
+// Typing — keystroke dynamics accumulated across ALL pages in the session (not
+// per-form), so the signal keeps growing as the user uses a multi-page app.
+type Typing struct {
+	Keys          int      `json:"keys"`          // printing keystrokes (session total)
+	EditKeys      int      `json:"editKeys"`      // non-printing edit keys (Shift/Tab/Backspace/arrows/Ctrl)
+	EditKeyKinds  []string `json:"editKeyKinds"`  // distinct edit-key groups seen
+	InterKeyStdev float64  `json:"interKeyStdev"` // cadence variance over the session
+	Intervals     int      `json:"intervals"`     // number of inter-key intervals measured
+	NoKeyFill     bool     `json:"noKeyFill"`     // a text field got a value with no keystrokes (bot .value set)
 }
 
 // ClickPattern — WHERE clicks land within their target, accumulated across all
@@ -213,6 +225,7 @@ type SignalSet struct {
 	Traps        *Traps
 	Funnel       *FunnelState
 	ClickPattern *ClickPattern
+	Typing       *Typing
 }
 
 // ---- Report (engine output, docs/03 §5) ----
