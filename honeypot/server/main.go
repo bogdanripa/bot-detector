@@ -455,7 +455,6 @@ type checksView struct {
 	Band, AutomationType   string
 	BandColor, Icon        string
 	Contradictions         []schema.Finding
-	Captured, Pending      []string
 }
 
 // The panel is a fixed right sidebar on wide screens (it stays put while you
@@ -495,10 +494,18 @@ var checksTmpl = template.Must(template.New("checks").Parse(`
   .bds-exp { color: #888; font-size: .78rem; }
   .bds-val { font-family: ui-monospace, monospace; font-size: .7rem; color: #777;
               overflow-wrap: anywhere; width: 32%; }
-  .bds-note { color: #888; font-size: .78rem; margin-bottom: 0; }
+  /* live behavioral meter (client-updated, continuous, cross-page) */
+  .bds-live { border: 1px solid #8884; border-radius: 10px; padding: .55rem .75rem; margin-bottom: .9rem; }
+  .bds-live-hd { font-size: .82rem; font-weight: 700; margin-bottom: .25rem; }
+  .bds-live-row { display: flex; align-items: baseline; gap: .55rem; }
+  .bds-live-pct { font-size: 1.5rem; font-weight: 800; }
+  .bds-live-meta { color: #888; font-size: .76rem; }
+  .bds-live-reasons { margin: .4rem 0 0; padding-left: 1.1rem; color: #cf222e; font-size: .78rem; }
+  .bds-live-ok { color: #1a7f37; font-size: .78rem; margin-top: .3rem; }
 </style>
 <aside class="bds-side">
   <h2>Live report — checks so far</h2>
+  <div class="bds-live" id="bds-live"></div>
   <div class="bds-banner" style="border-color:{{.BandColor}}">
     <div class="bds-pct" style="color:{{.BandColor}}">{{.Percent}}%</div>
     <div>
@@ -516,8 +523,6 @@ var checksTmpl = template.Must(template.New("checks").Parse(`
     <td class="bds-val">{{.Value}}</td>
   </tr>{{end}}
   </table>
-  <p class="bds-note">Captured so far: {{range $i, $c := .Captured}}{{if $i}}, {{end}}<b>{{$c}}</b>{{end}}.
-  {{if .Pending}}Still to come: {{range $i, $c := .Pending}}{{if $i}}, {{end}}{{$c}}{{end}} — continue through the pages and this list grows.{{end}}</p>
 </aside>
 <button class="bds-toggle" type="button" aria-label="Toggle detection checks panel" aria-expanded="true" title="Show/hide detection checks">
   <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -536,18 +541,6 @@ type findingView struct {
 func renderChecksHTML(report schema.Report) string {
 	bandColor := map[string]string{"human": "#1a7f37", "suspicious": "#bf8700", "automated": "#cf222e"}
 	icon := map[string]string{"human": "✓", "suspicious": "⚠", "automated": "✗"}
-	labels := []struct{ key, label string }{
-		{"layer2", "HTTP headers"}, {"layer3Tls", "TLS fingerprint"}, {"layer3Ip", "IP/ASN"},
-		{"layer1", "browser environment (JS)"}, {"behavior", "behavior (scroll/click/typing)"},
-	}
-	var captured, pending []string
-	for _, l := range labels {
-		if report.Coverage[l.key] == "captured" {
-			captured = append(captured, l.label)
-		} else {
-			pending = append(pending, l.label)
-		}
-	}
 	v := struct {
 		checksView
 		Checks []findingView
@@ -560,8 +553,6 @@ func renderChecksHTML(report schema.Report) string {
 			BandColor:      bandColor[report.Score.Band],
 			Icon:           icon[report.Score.Band],
 			Contradictions: report.Contradictions,
-			Captured:       captured,
-			Pending:        pending,
 		},
 	}
 	badge := map[string]string{"pass": "PASS", "warn": "WARN", "fail": "FAIL", "unavailable": "N/A", "pending": "PENDING"}

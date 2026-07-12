@@ -324,6 +324,109 @@
     });
   }
 
+  // ---------- continuous behavior monitor (page-independent, cross-page) ----------
+  // A drop-in library watches every user action on every page and keeps a running
+  // ratio of suspicious actions to total. State persists in sessionStorage so it
+  // survives navigations in non-SPA apps. Only high-precision tells count as
+  // suspicious (synthetic isTrusted=false events, exact-center clicks, metronomic
+  // typing, teleport scrolls) so a real human stays near 0% no matter how much
+  // they interact — and one injected action among N human ones reads as 1/(N+1).
+  var behaviorMonitor = (function () {
+    var KEY = "bd_behavior_v1";
+    var state = { total: 0, suspicious: 0, reasons: {}, startMs: 0 };
+    var started = false, rafPending = false, lastSaveMs = 0;
+    var lastMoveMs = 0, lastScrollMs = 0, lastGestureMs = 0, lastScrollY = 0, keyTimes = [];
+    function tnow() { return Date.now(); }
+    function load() {
+      try { var s = JSON.parse(sessionStorage.getItem(KEY)); if (s && typeof s.total === "number") state = s; } catch (e) {}
+      if (!state.startMs) state.startMs = tnow();
+      if (!state.reasons) state.reasons = {};
+    }
+    function save() {
+      var t = tnow(); if (t - lastSaveMs < 300) return; lastSaveMs = t;
+      try { sessionStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+    }
+    function scheduleRender() {
+      if (rafPending) return; rafPending = true;
+      (window.requestAnimationFrame || function (f) { setTimeout(f, 16); })(function () { rafPending = false; render(); });
+    }
+    // Ignore interaction with our own debug sidebar so reading the panel never
+    // pollutes the subject's behavior signals.
+    function fromSidebar(e) {
+      var t = e.target;
+      return !!(t && t.closest && (t.closest("aside.bds-side") || t.closest(".bds-toggle")));
+    }
+    function observe(suspicious, reason) {
+      state.total++;
+      if (suspicious) { state.suspicious++; state.reasons[reason] = (state.reasons[reason] || 0) + 1; }
+      save(); scheduleRender();
+    }
+    function stdev(a) {
+      if (a.length < 2) return Infinity;
+      var m = a.reduce(function (s, x) { return s + x; }, 0) / a.length;
+      return Math.sqrt(a.reduce(function (s, x) { return s + (x - m) * (x - m); }, 0) / a.length);
+    }
+    function exactCenter(e) {
+      try {
+        var r = e.target.getBoundingClientRect();
+        return Number.isInteger(e.clientX) && Number.isInteger(e.clientY) &&
+          Math.abs(e.clientX - (r.left + r.width / 2)) < 1 && Math.abs(e.clientY - (r.top + r.height / 2)) < 1;
+      } catch (x) { return false; }
+    }
+    function onPointerDown(e) {
+      if (fromSidebar(e)) return;
+      if (e.isTrusted === false) return observe(true, "synthetic click (isTrusted=false)");
+      observe(exactCenter(e), "injected click (exact element center)");
+    }
+    function onKeyDown(e) {
+      if (fromSidebar(e)) return;
+      if (e.isTrusted === false) return observe(true, "synthetic keypress (isTrusted=false)");
+      keyTimes.push(tnow()); if (keyTimes.length > 8) keyTimes.shift();
+      var iv = []; for (var i = 1; i < keyTimes.length; i++) iv.push(keyTimes[i] - keyTimes[i - 1]);
+      observe(iv.length >= 5 && stdev(iv) < 8, "metronomic typing (robotic cadence)");
+    }
+    function onGesture(e) { lastGestureMs = tnow(); if (e.isTrusted === false) observe(true, "synthetic " + e.type); }
+    function onMove(e) {
+      if (fromSidebar(e)) return;
+      var t = tnow(); if (t - lastMoveMs < 400) return; lastMoveMs = t;
+      observe(e.isTrusted === false, "synthetic pointer movement");
+    }
+    function onScroll() {
+      var t = tnow(); if (t - lastScrollMs < 400) return; lastScrollMs = t;
+      var y = window.scrollY || 0, jump = Math.abs(y - lastScrollY); lastScrollY = y;
+      observe(jump > 800 && t - lastGestureMs > 200, "teleport scroll (jump without a gesture)");
+    }
+    function render() {
+      var el = document.getElementById("bds-live"); if (!el) return;
+      var pct = state.total ? Math.round(100 * state.suspicious / state.total) : 0;
+      var color = pct >= 50 ? "#cf222e" : pct >= 15 ? "#bf8700" : "#1a7f37";
+      var secs = Math.round((tnow() - state.startMs) / 1000);
+      var h = '<div class="bds-live-hd">Live behavioral score <span style="color:#888;font-weight:400">· all pages</span></div>';
+      if (!state.total) { h += '<div class="bds-live-meta">watching for activity…</div>'; el.innerHTML = h; return; }
+      h += '<div class="bds-live-row"><span class="bds-live-pct" style="color:' + color + '">' + pct + '%</span>';
+      h += '<span class="bds-live-meta">' + state.suspicious + ' suspicious of ' + state.total + ' actions · ' + secs + 's watched</span></div>';
+      var rs = Object.keys(state.reasons);
+      if (rs.length) { h += '<ul class="bds-live-reasons">'; rs.forEach(function (r) { h += '<li>' + esc(r) + ' &times;' + state.reasons[r] + '</li>'; }); h += '</ul>'; }
+      else h += '<div class="bds-live-ok">No automation tells in your activity yet.</div>';
+      el.innerHTML = h;
+    }
+    function start() {
+      if (started) return; started = true;
+      load();
+      var opt = { capture: true, passive: true };
+      addEventListener("pointerdown", onPointerDown, opt);
+      addEventListener("keydown", onKeyDown, opt);
+      addEventListener("wheel", onGesture, opt);
+      addEventListener("touchstart", onGesture, opt);
+      addEventListener("pointermove", onMove, opt);
+      addEventListener("scroll", onScroll, opt);
+      addEventListener("pagehide", function () { lastSaveMs = 0; save(); });
+      lastScrollY = window.scrollY || 0;
+      render();
+    }
+    return { start: start, render: render, snapshot: function () { return state; } };
+  })();
+
   // ---------- debug sidebar (server-rendered; re-rendered here when new
   // signals are posted mid-page, e.g. the passive Layer 1 snapshot on load) ----------
   function renderSidebar(report) {
@@ -333,6 +436,7 @@
     var color = { human: "#1a7f37", suspicious: "#bf8700", automated: "#cf222e" }[sc.band] || "#555";
     var icon = { human: "✓", suspicious: "⚠", automated: "✗" }[sc.band] || "";
     var h = "<h2>Live report — checks so far</h2>";
+    h += '<div class="bds-live" id="bds-live"></div>';
     h += '<div class="bds-banner" style="border-color:' + color + '">';
     h += '<div class="bds-pct" style="color:' + color + '">' + sc.percent + "%</div><div>";
     h += '<div style="font-weight:700;color:' + color + '">' + icon + " " + esc(sc.band.toUpperCase()) + "</div>";
@@ -357,16 +461,8 @@
       h += '<td class="bds-val">' + esc(c.value || "") + "</td></tr>";
     });
     h += "</table>";
-    var labels = [["layer2", "HTTP headers"], ["layer3Tls", "TLS fingerprint"], ["layer3Ip", "IP/ASN"],
-      ["layer1", "browser environment (JS)"], ["behavior", "behavior (scroll/click/typing)"]];
-    var captured = [], pending = [];
-    labels.forEach(function (l) {
-      ((report.coverage || {})[l[0]] === "captured" ? captured : pending).push(l[1]);
-    });
-    h += '<p class="bds-note">Captured so far: <b>' + captured.map(esc).join("</b>, <b>") + "</b>.";
-    if (pending.length) h += " Still to come: " + pending.map(esc).join(", ") + " — continue through the pages and this list grows.";
-    h += "</p>";
     el.innerHTML = h;
+    behaviorMonitor.render(); // refill the live block the rebuild just cleared
   }
 
   // ---------- drop-in autostart (docs/15) ----------
@@ -398,6 +494,7 @@
     var link, form;
     initSidebarResize();
     initSidebarToggle();
+    behaviorMonitor.start(); // watch everything, every page, regardless of step
     if (BOOT.step === "landing") {
       var passive = null;
       collectPassive().then(function (l1) {
@@ -447,7 +544,8 @@
   window.botdetect = {
     boot: BOOT, collectPassive: collectPassive, post: post, beacon: beacon,
     instrumentScrollAndLink: instrumentScrollAndLink, instrumentForm: instrumentForm,
-    readTraps: readTraps, renderReport: renderReport, autostart: autostart
+    readTraps: readTraps, renderReport: renderReport, autostart: autostart,
+    behaviorMonitor: behaviorMonitor
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initHoneypot);
