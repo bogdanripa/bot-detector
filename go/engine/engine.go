@@ -59,7 +59,7 @@ var checkIndex = map[string]int{
 	"anti_tamper_patched": 67,
 	// client-side live behavior — confidence grows as the user acts (high)
 	"scroll_teleport": 82, "click_position_pattern": 83, "click_no_trail": 84,
-	"behavior_scripted": 86, "clean_env_agentic_behavior": 88,
+	"behavior_scripted": 86, "human_edit_keys": 87, "clean_env_agentic_behavior": 88,
 }
 
 // realtimeAgentTokens are UA substrings of on-demand, user-triggered AI fetchers
@@ -471,6 +471,20 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 			recordConf("behavior_scripted", "pass",
 				"human-like typing ("+itoa(totalKeys)+" keys, "+pct(conf)+" confidence)", conf)
 		}
+	}
+	// Human editing keys: non-printing keys (Shift/Tab/Backspace/arrows/Ctrl) a
+	// person uses while typing. Their presence is positive evidence of a human —
+	// fires with a NEGATIVE weight (pulls the verdict toward human).
+	if b := ss.Behavior; b == nil {
+		recordConf("human_edit_keys", "pending", "awaiting typing", 0)
+	} else if b.EditKeys > 0 {
+		kinds := "keys"
+		if len(b.EditKeyKinds) > 0 {
+			kinds = strings.Join(b.EditKeyKinds, ", ")
+		}
+		fire("human_edit_keys", itoa(b.EditKeys)+" edit keys ("+kinds+")")
+	} else {
+		recordConf("human_edit_keys", "inconclusive", "no editing keys seen yet", 0.3)
 	}
 	if tr := ss.Traps; tr != nil {
 		if tr.DomHoneypotFilled {

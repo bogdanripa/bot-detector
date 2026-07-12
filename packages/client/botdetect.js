@@ -217,8 +217,25 @@
     if (el.tagName !== "INPUT") return false;
     return ["text", "email", "search", "tel", "url", "password", "number"].indexOf((el.type || "text").toLowerCase()) >= 0;
   }
+  // editKeyKind maps a non-printing "editing" key to a display group, or "" if
+  // the key produces a character. A human naturally uses these while filling a
+  // form; a script that sets .value or types plain chars won't emit them.
+  function editKeyKind(e) {
+    switch (e.key) {
+      case "Shift": case "CapsLock": return "Shift";
+      case "Control": case "Meta": case "Alt": case "AltGraph": return "Ctrl/Cmd/Alt";
+      case "Tab": return "Tab";
+      case "Backspace": case "Delete": return "Backspace/Del";
+      case "ArrowUp": case "ArrowDown": case "ArrowLeft": case "ArrowRight": return "Arrow";
+      case "Home": case "End": case "PageUp": case "PageDown": return "Home/End";
+    }
+    // a modifier held while pressing another key (e.g. Ctrl+A) also counts
+    if ((e.ctrlKey || e.metaKey || e.altKey) && e.key && e.key.length === 1) return "Ctrl/Cmd/Alt";
+    return "";
+  }
   function instrumentForm(formEl) {
     var t0 = performance.now(), fields = {}, focusOrder = [], tabUsed = false, mouseMoves = 0, firstInteraction = null;
+    var editKeys = 0, editKinds = {};
     function mark() { if (firstInteraction === null) firstInteraction = performance.now() - t0; }
     function acc(name) { return fields[name] || (fields[name] = { name: name, keydowns: 0, inter: [], last: 0, backspaces: 0, pasteEvents: 0, filledWithoutKeys: false, autofillPseudo: false }); }
     addEventListener("mousemove", function () { mouseMoves++; }, { passive: true, capture: true });
@@ -232,6 +249,7 @@
         mark(); f.keydowns++;
         var now = performance.now(); if (f.last) f.inter.push(now - f.last); f.last = now;
         if (e.key === "Tab") tabUsed = true; if (e.key === "Backspace") f.backspaces++;
+        var kind = editKeyKind(e); if (kind) { editKeys++; editKinds[kind] = true; }
       });
       el.addEventListener("paste", function () { mark(); f.pasteEvents++; });
       el.addEventListener("input", function () {
@@ -252,7 +270,8 @@
         durationMs: Math.round(performance.now() - t0),
         fillToSubmitMs: Math.round(performance.now() - t0),
         fields: out, focusOrder: focusOrder, tabKeyUsed: tabUsed,
-        mouseMoveEvents: mouseMoves, straightSegmentsRatio: 0, globalInterKeyStdev: 0
+        mouseMoveEvents: mouseMoves, straightSegmentsRatio: 0, globalInterKeyStdev: 0,
+        editKeys: editKeys, editKeyKinds: Object.keys(editKinds)
       };
     };
   }

@@ -135,6 +135,10 @@ type Behavior struct {
 	MouseMoveEvents       int         `json:"mouseMoveEvents"`
 	StraightSegmentsRatio float64     `json:"straightSegmentsRatio"`
 	GlobalInterKeyStdev   float64     `json:"globalInterKeyStdev"`
+	// EditKeys counts non-printing keys a human uses while typing (Shift, Tab,
+	// Backspace, arrows, Ctrl/Cmd); EditKeyKinds lists the distinct groups seen.
+	EditKeys     int      `json:"editKeys"`
+	EditKeyKinds []string `json:"editKeyKinds"`
 }
 
 type FormField struct {

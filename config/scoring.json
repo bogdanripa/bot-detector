@@ -165,6 +165,12 @@
       "status": "fail",
       "title": "Fixed click placement",
       "explanation": "Clicks land at the same relative spot inside targets (e.g. always dead-center) across many clicks \u2014 a scripted, fixed offset. Needs several clicks to conclude."
+    },
+    "human_edit_keys": {
+      "weight": -1.5,
+      "status": "pass",
+      "title": "Human editing keys",
+      "explanation": "Non-printing keys a human naturally uses while typing (Shift, Tab, Backspace, arrows, Ctrl/Cmd). A script that sets values or types plain characters won't emit these."
     }
   },
   "contradictions": {
