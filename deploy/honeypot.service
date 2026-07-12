@@ -12,6 +12,10 @@ ExecStart=/opt/honeypot/honeypot
 
 # ---- config (edit these) ----
 Environment=BD_ADDR=:443
+# One or more hostnames (comma-separated) — autocert issues/renews a Let's
+# Encrypt cert for each. Each must resolve to this VM with :80 reachable, and
+# must NOT sit behind a TLS-terminating proxy/CDN (e.g. Cloudflare must be
+# "DNS only", grey cloud) or Layer 3 is lost.
 Environment=BD_DOMAIN=CHANGE-ME.duckdns.org
 Environment=BD_CERT_CACHE=/opt/honeypot/certs
 Environment=BD_ENFORCE_BAND=suspicious
