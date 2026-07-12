@@ -194,6 +194,19 @@
       beacon("landing", extra);
       // do NOT preventDefault — let the normal <a> navigation proceed
     }, true);
+    // Live scroll (debug): re-post provenance as the user scrolls (throttled) so
+    // the scroll_teleport check climbs pending → inconclusive → pass in real time.
+    if (BOOT.mode !== "test") {
+      var liveScrollT = 0;
+      addEventListener("scroll", function () {
+        var now = performance.now();
+        if (now - liveScrollT < 400) return; liveScrollT = now;
+        var prov = scrollProvenance(); prov.reachedLink = false;
+        var extra = { scrollToLink: prov };
+        if (extraFn) Object.assign(extra, extraFn());
+        post("landing", extra).then(renderSidebar);
+      }, { passive: true });
+    }
   }
 
   // ---------- form behavior (Page 2) ----------
@@ -567,6 +580,16 @@
         form.addEventListener("submit", function (e) {
           var payload = { layer1: passiveF, behavior: flush(), traps: readTraps(form) };
           e.preventDefault();
+          // Keep the submitted field VALUES in the browser only (the promise is
+          // that form contents never leave it) so the result page can echo them.
+          try {
+            var data = {};
+            form.querySelectorAll("input,textarea,select").forEach(function (el) {
+              if (el.hasAttribute("data-bd-honeypot")) return;
+              var k = el.name || el.id; if (k) data[k] = el.value;
+            });
+            sessionStorage.setItem("bd_form_v1", JSON.stringify(data));
+          } catch (x) {}
           // Wait for the server to record this page's behavior BEFORE navigating,
           // so /<mode>/result scores WITH the typing signals. A fire-and-forget
           // beacon races the navigation and the result page would show
@@ -579,9 +602,28 @@
         }, true);
       }
     } else if (BOOT.step === "result") {
+      // The detection report already lives in the sidebar — don't reprint it.
+      // Echo the submitted form data (kept client-side) as the app's confirmation.
       var mount = document.getElementById("bd-report");
-      if (mount && BOOT.report) renderReport(BOOT.report, mount);
+      if (mount) renderSubmitted(mount);
     }
+  }
+
+  // Render the just-submitted form data (from sessionStorage) as an app-style
+  // confirmation — the honeypot's cover story, and the "text to be checked".
+  function renderSubmitted(mount) {
+    var data = {};
+    try { data = JSON.parse(sessionStorage.getItem("bd_form_v1")) || {}; } catch (e) {}
+    var keys = Object.keys(data);
+    if (!keys.length) {
+      mount.innerHTML = '<p class="note">No submission found — you reached this page directly. ' +
+        'Start at the <a href="/' + (BOOT.mode || "debug") + '">beginning</a> to submit the form.</p>';
+      return;
+    }
+    var h = '<p class="note">Thanks — a real app would process this now. Here is exactly what you submitted ' +
+      '(kept in your browser; only timing and movement were analyzed):</p><dl class="bd-submitted">';
+    keys.forEach(function (k) { h += "<dt>" + esc(k) + "</dt><dd>" + esc(data[k] || "(empty)") + "</dd>"; });
+    mount.innerHTML = h + "</dl>";
   }
 
   window.botdetect = {

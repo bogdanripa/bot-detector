@@ -3,34 +3,27 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Your automation report</title>
+<title>Thanks — submission received</title>
 <script type="application/json" id="bd-bootstrap">__BD_BOOTSTRAP__</script>
 <style>
   :root { color-scheme: light dark; }
   body { font: 16px/1.55 system-ui, sans-serif; max-width: 46rem; margin: 0 auto; padding: 2rem 1.2rem; }
   h1 { font-size: 1.5rem; }
-  h3 { margin: 1.6rem 0 .4rem; }
-  .bd-banner { display: flex; align-items: center; gap: 1.2rem; border: 3px solid; border-radius: 12px; padding: 1rem 1.4rem; margin: 1rem 0; }
-  .bd-pct { font-size: 2.8rem; font-weight: 800; }
-  .bd-verdict { font-size: 1.3rem; font-weight: 700; }
-  .bd-sub { color: #777; font-size: .9rem; }
-  .bd-contra { padding-left: 1.1rem; }
-  .bd-contra li { margin: .3rem 0; }
-  table.bd-checks { border-collapse: collapse; width: 100%; }
-  .bd-checks td { border-top: 1px solid #ddd; padding: .5rem .4rem; vertical-align: top; }
-  @media (prefers-color-scheme: dark) { .bd-checks td { border-color: #333; } }
-  .bd-badge { color: #fff; font-size: .7rem; font-weight: 700; padding: .12rem .4rem; border-radius: 4px; }
-  .bd-exp { color: #888; font-size: .85rem; }
-  .bd-val { font-family: ui-monospace, monospace; font-size: .8rem; color: #555; max-width: 16rem; word-break: break-all; }
+  .note { color: #777; }
+  dl.bd-submitted { display: grid; grid-template-columns: max-content 1fr; gap: .4rem 1rem; margin: 1.2rem 0;
+                    border: 1px solid #8884; border-radius: 10px; padding: 1rem 1.2rem; }
+  dl.bd-submitted dt { font-weight: 700; color: #555; }
+  @media (prefers-color-scheme: dark) { dl.bd-submitted dt { color: #aaa; } }
+  dl.bd-submitted dd { margin: 0; white-space: pre-wrap; word-break: break-word; }
   a.again { display: inline-block; margin-top: 1.5rem; color: #0969da; }
 </style>
 </head>
 <body>
-  <h1>Your automation report</h1>
-  <!-- Fixed sidebar (debug): server-rendered report, independent of the JS
-       mount below so the page still shows the verdict with JS disabled. -->
+  <h1>Thanks — here's what you submitted</h1>
+  <!-- Detection report lives in the sidebar (__BD_CHECKS__). This main content
+       is the app's confirmation: the form data, echoed from the browser. -->
   __BD_CHECKS__
-  <div id="bd-report">Compiling report…</div>
+  <div id="bd-report">Loading your submission…</div>
   <a class="again" href="/">↺ Run it again</a>
   <script src="/botdetect.js" defer></script>
 </body>

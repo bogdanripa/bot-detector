@@ -48,11 +48,11 @@ func New(configJSON []byte) (*Engine, error) {
 var checkIndex = map[string]int{
 	// server-side transport / network / funnel (low)
 	"ip_datacenter": 10, "tls_ua_vendor_mismatch": 12, "header_order_is_library": 14,
-	"missing_client_hints": 20, "missing_sec_fetch": 21, "minimal_accept": 22,
+	"missing_client_hints": 20, "missing_sec_fetch": 21, "minimal_accept": 22, "headless_ua": 24,
 	"funnel_bypass": 30, "cross_nav_inconsistency": 31,
 	// client-side browser environment — deterministic once JS runs (mid)
 	"implausible_hardware": 50, "software_webgl": 51, "no_plugins": 52, "languages_empty": 53,
-	"permissions_contradiction": 54, "headless_ua": 55, "canvas_blocked": 56, "impossible_geometry": 57,
+	"permissions_contradiction": 54, "canvas_blocked": 56, "impossible_geometry": 57,
 	"chrome_runtime_missing": 58, "navigator_webdriver": 60, "cdc_artifacts": 61, "selenium_attributes": 62,
 	"playwright_bindings": 63, "phantom_globals": 64, "node_globals": 65, "cdp_runtime_enable": 66,
 	"anti_tamper_patched": 67,
@@ -216,11 +216,6 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 		}
 
 		h := l1.Headless
-		if h.UaHasHeadlessChrome {
-			fire("headless_ua", "HeadlessChrome")
-		} else {
-			pass("headless_ua", "no HeadlessChrome token")
-		}
 		if h.PermissionsContradiction {
 			fire("permissions_contradiction", "denied vs default")
 		} else {
@@ -275,7 +270,7 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 		// debug panel shows everything that will be evaluated.
 		for _, id := range []string{"cdc_artifacts", "selenium_attributes", "phantom_globals",
 			"playwright_bindings", "navigator_webdriver", "node_globals", "cdp_runtime_enable",
-			"anti_tamper_patched", "headless_ua", "permissions_contradiction", "languages_empty",
+			"anti_tamper_patched", "permissions_contradiction", "languages_empty",
 			"no_plugins", "software_webgl", "implausible_hardware", "canvas_blocked",
 			"impossible_geometry", "chrome_runtime_missing"} {
 			record(id, "pending", "awaiting browser JS")
@@ -284,6 +279,13 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 
 	// ---- Layer 2 rules ----
 	if l2 := ss.Layer2; l2 != nil {
+		// HeadlessChrome is right in the request User-Agent header — a pure
+		// server-side check, no browser JS needed.
+		if strings.Contains(l2.UserAgent, "HeadlessChrome") {
+			fire("headless_ua", "HeadlessChrome in UA")
+		} else if l2.UserAgent != "" {
+			pass("headless_ua", "no HeadlessChrome token")
+		}
 		chromium := strings.Contains(l2.UserAgent, "Chrome/") || l2.SecChUa != ""
 		if chromium {
 			if l2.SecChUa == "" {
@@ -338,13 +340,26 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 	// These carry a confidence that starts at 0 (pending) and rises as the user
 	// acts, crossing thresholds: pending → inconclusive → pass/fail.
 	humanScroll := ss.ScrollToLink != nil && ss.ScrollToLink.AnyUserGesture
-	if st := ss.ScrollToLink; st != nil && st.ReachedLink {
-		if st.Teleport && !st.AnyUserGesture && st.LandedPixelAligned {
-			fireConf("scroll_teleport", "fail", "no gesture, pixel-aligned", 1.0)
-		} else if st.AnyUserGesture {
-			recordConf("scroll_teleport", "pass", "human scroll gesture", 1.0)
-		} else {
-			recordConf("scroll_teleport", "inconclusive", "reached the link without a scroll", 0.4)
+	if st := ss.ScrollToLink; st != nil {
+		// Confidence grows with observed scroll activity (~8 events ⇒ certain),
+		// so the check climbs live as the user scrolls the landing page.
+		conf := float64(st.ScrollEvents) / 8.0
+		if conf > 1 {
+			conf = 1
+		}
+		switch {
+		case st.Teleport && !st.AnyUserGesture && st.LandedPixelAligned:
+			fireConf("scroll_teleport", "fail", "teleport: no gesture, pixel-aligned", 1.0)
+		case st.ScrollEvents == 0 && !st.ReachedLink:
+			recordConf("scroll_teleport", "pending", "awaiting scroll on the landing page", 0)
+		case st.AnyUserGesture && conf >= 0.5:
+			recordConf("scroll_teleport", "pass",
+				"human scroll gesture ("+itoa(st.ScrollEvents)+" events, "+pct(conf)+" confidence)", conf)
+		case st.AnyUserGesture:
+			recordConf("scroll_teleport", "inconclusive",
+				"scrolling by gesture ("+pct(conf)+" confidence)", conf)
+		default:
+			recordConf("scroll_teleport", "inconclusive", "reached the link without a clear scroll gesture", 0.4)
 		}
 	} else {
 		recordConf("scroll_teleport", "pending", "awaiting scroll on the landing page", 0)
@@ -414,10 +429,18 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 
 	// ---- Funnel rules ----
 	if fn := ss.Funnel; fn != nil {
-		if !fn.ReachedInOrder {
-			fireContra("funnel_bypass", "reached out of order / deep-link")
-		} else if !fired["funnel_bypass"] {
+		switch {
+		case fired["funnel_bypass"]:
+			// already fired by the DOM-honeypot trap above — don't double-count.
+		case fn.ReachedInOrder:
 			passContra("funnel_bypass", "steps in order")
+		case len(fn.StepsSeen) <= 1:
+			// Landed directly on a deep step with no prior steps this session —
+			// a refresh, bookmark, or deep-link. A human reload looks identical
+			// to a bot here, so record it as inconclusive, not a hard bypass.
+			recordContra("funnel_bypass", "inconclusive", "landed directly (refresh or deep-link)")
+		default:
+			fireContra("funnel_bypass", "reached out of order / deep-link")
 		}
 		if len(fn.StepsSeen) >= 2 {
 			if !fn.CrossNavConsistent {
