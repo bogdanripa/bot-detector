@@ -38,6 +38,89 @@ green/red pass-or-fail banner, and a checklist of every individual test.
 [`python/`](python/) 🚧 · `packages/` (browser client + JS engine + schema) ·
 `config/` (shared scoring + reference data) · `honeypot/` (the app) · `docs/`.
 
+## Quickstart — add detection to your own app
+
+Detection is **two halves**: a tiny **client library** that watches the visitor
+and a **server engine** that scores what it sends. You can adopt one or both.
+The honeypot's **`/test`** mode is the complete, deployed reference — study
+[`honeypot/server/main.go`](honeypot/server/main.go) and try it live:
+**<https://35.202.101.31.sslip.io/test>** (blocks bots) ·
+**[`/debug`](https://35.202.101.31.sslip.io/debug)** (shows every check).
+
+### 1. Client — one script tag
+
+Serve [`packages/client/botdetect.js`](packages/client/botdetect.js) and drop it
+into your pages. `autostart()` attaches passive + behavioral collectors globally,
+watches your existing forms/links, and posts batches to your endpoint. It never
+calls `preventDefault`, adds no dependency, and is fully `try/catch`-isolated —
+if it or the endpoint fails, your app is unaffected.
+
+```html
+<script src="/botdetect.js" defer></script>
+<script>
+  addEventListener("DOMContentLoaded", function () {
+    // sessionId is issued by YOUR server (a cookie or a rendered value) so the
+    // backend can tie these posts to the request it captured.
+    window.botdetect.autostart({ endpoint: "/api/analyze", sessionId: window.__BD_SID });
+  });
+</script>
+```
+
+The collector watches **everything, continuously, across page loads** (behavioral
+state persists in `sessionStorage`), so signals keep accumulating as the visitor
+moves through a multi-page (non-SPA) app.
+
+### 2. Server — score what arrives (Go)
+
+Compose the libraries. Any layer can be absent — the engine scores whatever it
+gets and reports its coverage. Minimal shape (see `main.go` for the full wiring):
+
+```go
+eng, _   := engine.New(botdetector.ScoringJSON)  // the scoring config
+capt      := tlscapture.New()                    // Layer 3: JA3/JA4 + header order
+classify := ipasn.New()                          // Layer 3: IP → ASN / datacenter
+
+// Own the socket so the ClientHello reaches us (no proxy/CDN in front):
+ln := capt.InstrumentListener(rawListener, tlsCfg)
+
+// Per request, capture Layer 2/3 from the connection:
+l2 := httpcapture.FromRequest(r, capt.HeaderOrderFor(r.RemoteAddr))
+l3 := /* classify.Classify(r.RemoteAddr) + capt.TLSFor(r.RemoteAddr) */
+
+// POST /api/analyze — the browser posts Layer 1 + behavior; you score the union:
+var p schema.ClientPayload
+json.NewDecoder(r.Body).Decode(&p)
+report := eng.Score(schema.SignalSet{
+    Layer1: p.Layer1, Layer2: l2, Layer3: l3,
+    ScrollToLink: p.ScrollToLink, LinkClick: p.LinkClick,
+    Behavior: p.Behavior, ClickPattern: p.ClickPattern, Typing: p.Typing,
+})
+// report.Score.Band ∈ {human, suspicious, automated}; report.Checks is the full list.
+```
+
+> **Layer 3 needs the socket.** JA3/JA4 and raw header order require terminating
+> your own TLS — never put a TLS-terminating load balancer, CDN, or Cloudflare
+> (proxied) in front, or Layer 3 is lost. Layers 1–2 work behind anything.
+
+### 3. Enforce, or just observe
+
+The verdict is yours to act on. The honeypot shows both modes off the same code:
+
+- **`/test`** — enforces: it 403s a request whose server-only signals are
+  conclusively a bot, and blocks at the end if the full verdict crosses the
+  `BD_ENFORCE_BAND` threshold. Legit crawlers pass (see the allowlist below).
+- **`/debug`** — never blocks; renders the live, growing checklist + score.
+
+**Allowlist.** Verified good bots (Googlebot/Bingbot via reverse-DNS, OpenAI
+crawlers via published IP ranges, Web Bot Auth signatures) and trusted
+User-Agents (`BD_UA_ALLOWLIST`) bypass enforcement, so your content still gets
+indexed. Real-time AI *fetchers* (ChatGPT-User, Perplexity-User) are treated as
+automation.
+
+**Lighter tiers** (client-only, or middleware without owning the socket) and the
+non-interference guarantees are in
+[docs/15 — Drop-in integration](docs/15-drop-in-integration.md).
+
 ## Two decisions that shape the honeypot
 
 1. **We self-host on a server that terminates its own TLS.** Not a Google Cloud
@@ -59,17 +142,19 @@ The honeypot is a three-page funnel; each page is a real navigation the server
 re-captures, and each transition between pages is itself a detection signal.
 
 ```
-PAGE 1  GET /          Landing: some text + a link placed BELOW THE FOLD.
+PAGE 1  GET /test        Landing: some text + a link placed BELOW THE FOLD.
    │   server captures Layer 2 (headers, order) + Layer 3 (TLS/JA4, HTTP2, IP/ASN);
    │   client collects passive Layer 1 + instruments the SCROLL + the LINK click.
    │        ↓  the user SCROLLS to the link, then CLICKS it (real gesture + real click)
-PAGE 2  GET /step-2     Form: name/email/topic/message + submit (+ hidden honeypot traps).
+PAGE 2  GET /test/form    Form: name/email/topic/message + submit (+ hidden honeypot traps).
    │   server re-captures Layer 2/3 and VERIFIES the transition (real scroll + click?);
    │   client collects passive Layer 1 again + form behavior + trap outcomes.
    │        ↓  the user FILLS + SUBMITS the form
-PAGE 3  GET /result     Report: the green/amber/red verdict, automationType, and
+PAGE 3  GET /test/result  Report: the green/amber/red verdict, automationType, and
         the full checklist — aggregated across all three steps.
 ```
+
+(Same three routes under **`/debug`** show the live checklist instead of enforcing.)
 
 Three natural interactions — a **scroll** (the link is below the fold, so you must
 scroll to reach it), a **link click**, then a **form fill** — instead of an

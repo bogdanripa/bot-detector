@@ -609,6 +609,8 @@
   function autostart(opts) {
     opts = opts || {};
     if (opts.endpoint) ENDPOINT = opts.endpoint;
+    if (opts.sessionId) BOOT.sessionId = opts.sessionId;
+    behaviorMonitor.start(); // continuous, cross-page behavior (clicks/keys/scroll)
     collectPassive().then(function (l1) { post("landing", { layer1: l1 }); });
     // global, passive, capture-phase — covers existing forms/links, never preventDefault
     var forms = document.querySelectorAll("form");
@@ -616,7 +618,7 @@
       var flush = instrumentForm(f);
       f.addEventListener("submit", function () { beacon("form", { behavior: flush(), traps: readTraps(f) }); }, true);
     });
-    return { onVerdict: function () {} };
+    return { snapshot: function () { return behaviorMonitor.snapshot(); } };
   }
 
   // ---------- honeypot per-step auto-init ----------
