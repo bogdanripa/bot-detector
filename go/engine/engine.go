@@ -432,11 +432,14 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 	// so the check moves pending → inconclusive → pass/fail live as you type.
 	{
 		b := ss.Behavior
-		totalKeys, noKeyFill, metronomic := 0, false, false
+		totalKeys, noKeyFill, metronomic, autofilled := 0, false, false, false
 		reasons := []string{}
 		if b != nil {
 			for _, f := range b.Fields {
 				totalKeys += f.Keydowns
+				if f.AutofillPseudo {
+					autofilled = true
+				}
 				if f.FilledWithoutKeys && !f.AutofillPseudo {
 					noKeyFill = true
 					reasons = append(reasons, f.Name+":no-keys")
@@ -459,6 +462,10 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 		case noKeyFill:
 			// values appeared with no keystrokes at all — a strong tell regardless of count
 			fireConf("behavior_scripted", "fail", strings.Join(reasons, ","), 0.9)
+		case totalKeys == 0 && autofilled:
+			// legitimately filled by the browser's autofill — nothing to fault,
+			// but there is no typing cadence to analyze.
+			recordConf("behavior_scripted", "inconclusive", "filled by browser autofill — no typing to analyze", 0.3)
 		case totalKeys == 0:
 			recordConf("behavior_scripted", "pending", "awaiting form typing", 0)
 		case conf < 0.5:
