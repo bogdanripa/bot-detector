@@ -639,10 +639,15 @@
             liveT = Date.now(); clearTimeout(liveTrail); liveTrail = null;
             post("form", { layer1: passiveF, behavior: flush(), traps: readTraps(form) }).then(renderSidebar);
           }
-          form.addEventListener("input", function () {
+          function scheduleLive() {
             if (Date.now() - liveT >= 400) livePost();
             else if (!liveTrail) liveTrail = setTimeout(livePost, 400);
-          }, true);
+          }
+          form.addEventListener("input", scheduleLive, true);
+          // Special keys (Shift/Tab/arrows/Ctrl/Backspace) don't fire 'input' but
+          // do change the edit-key count — refresh on keydown too. Bubble phase,
+          // so it runs after the per-field handler that increments the count.
+          form.addEventListener("keydown", scheduleLive);
         }
         form.addEventListener("submit", function (e) {
           var payload = { layer1: passiveF, behavior: flush(), traps: readTraps(form) };
