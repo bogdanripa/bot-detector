@@ -336,7 +336,11 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 			passContra("header_order_is_library", "browser-shaped order")
 		case l2.HeaderOrderMatch != "":
 			recordContra("header_order_is_library", "unavailable", l2.HeaderOrderMatch)
+		default:
+			recordContra("header_order_is_library", "unavailable", "header order not captured")
 		}
+	} else {
+		recordContra("header_order_is_library", "pending", "awaiting the request")
 	}
 
 	// ---- Layer 3 rules ----
@@ -348,15 +352,25 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 		} else {
 			record("ip_datacenter", "unavailable", "ASN unknown (no IP table loaded)")
 		}
-		// TLS stack vs UA vendor
+	} else {
+		record("ip_datacenter", "pending", "awaiting the TLS connection")
+	}
+	// TLS stack vs UA vendor — always emit a row so the list is stable.
+	{
 		ua := ""
 		if ss.Layer2 != nil {
 			ua = ss.Layer2.UserAgent
 		}
 		claimsBrowser := strings.Contains(ua, "Chrome/") || strings.Contains(ua, "Firefox/") || strings.Contains(ua, "Safari/")
-		if l3.StackClass == "library" && claimsBrowser {
+		l3 := ss.Layer3
+		switch {
+		case !claimsBrowser:
+			recordContra("tls_ua_vendor_mismatch", "unavailable", "UA doesn't claim a browser")
+		case l3 == nil || !l3.Available:
+			recordContra("tls_ua_vendor_mismatch", "pending", "awaiting the TLS handshake")
+		case l3.StackClass == "library":
 			fireContra("tls_ua_vendor_mismatch", l3.MatchedStack+" vs "+shortUA(ua))
-		} else if claimsBrowser {
+		default:
 			passContra("tls_ua_vendor_mismatch", l3.StackClass+" stack ("+l3.JA4+")")
 		}
 	}
@@ -527,11 +541,22 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 	}
 
 	// ---- Cross-cutting: clean environment + non-human input ----
+	// A pristine browser environment paired with injected (non-human) input is
+	// the signature of an OS-level agent driving a real browser. Always emit a
+	// row so it doesn't appear/disappear.
 	envClean := ss.Layer1 != nil && !anyHardAutomation(fired) &&
 		(ss.Layer3 == nil || ss.Layer3.StackClass != "library")
 	nonHumanInput := fired["scroll_teleport"] || fired["click_no_trail"]
-	if envClean && nonHumanInput {
+	haveInput := ss.ScrollToLink != nil || (ss.LinkClick != nil && ss.LinkClick.Occurred)
+	switch {
+	case ss.Layer1 == nil || !haveInput:
+		recordContra("clean_env_agentic_behavior", "pending", "awaiting browser JS + input provenance")
+	case !envClean:
+		recordContra("clean_env_agentic_behavior", "unavailable", "environment already shows automation tells")
+	case nonHumanInput:
 		fireContra("clean_env_agentic_behavior", "pristine environment + injected input")
+	default:
+		passContra("clean_env_agentic_behavior", "clean environment, human-looking input")
 	}
 
 	// ---- Apply caps ----
