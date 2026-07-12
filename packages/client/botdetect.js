@@ -422,6 +422,9 @@
       addEventListener("scroll", onScroll, opt);
       addEventListener("pagehide", function () { lastSaveMs = 0; save(); });
       lastScrollY = window.scrollY || 0;
+      // Periodic tick: repaints even when rAF is throttled (background tabs) and
+      // advances the "Xs watched" clock so the score visibly evolves over time.
+      setInterval(render, 500);
       render();
     }
     return { start: start, render: render, snapshot: function () { return state; } };
