@@ -528,14 +528,16 @@
         var flush = instrumentForm(form);
         form.addEventListener("submit", function (e) {
           var payload = { layer1: passiveF, behavior: flush(), traps: readTraps(form) };
-          if (BOOT.mode === "test") {
-            e.preventDefault();
-            post("form", payload).then(function (rep) {
-              if (!enforce(rep)) location.href = BOOT.submit || "/test/submit";
-            });
-          } else {
-            beacon("form", payload); // let the form POST to /<mode>/submit → /<mode>/result
-          }
+          e.preventDefault();
+          // Wait for the server to record this page's behavior BEFORE navigating,
+          // so /<mode>/result scores WITH the typing signals. A fire-and-forget
+          // beacon races the navigation and the result page would show
+          // behavior_scripted stuck at "awaiting form typing".
+          var go = function () { location.href = BOOT.submit || ("/" + BOOT.mode + "/submit"); };
+          post("form", payload).then(function (rep) {
+            if (BOOT.mode === "test" && enforce(rep)) return; // redirected to /forbidden
+            go();
+          }, go); // navigate even if the post failed
         }, true);
       }
     } else if (BOOT.step === "result") {
