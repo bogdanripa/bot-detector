@@ -819,7 +819,6 @@ var checksTmpl = template.Must(template.New("checks").Parse(`
   <div class="bds-head"><h2>Live report — checks so far</h2>
     <button class="bds-reset" type="button" title="Clear the running tally and start a fresh session">Reset</button></div>
   {{if .Allow}}<div class="bds-allow">✓ Allowlisted — {{.Allow}}. Enforcement bypassed.</div>{{end}}
-  <div class="bds-live" id="bds-live"></div>
   <div class="bds-banner" style="border-color:{{.BandColor}}">
     <div class="bds-pct" style="color:{{.BandColor}}">{{.Percent}}%</div>
     <div>
@@ -827,6 +826,7 @@ var checksTmpl = template.Must(template.New("checks").Parse(`
       <div class="bds-sub">automation probability {{.Percent}}% &middot; confidence {{.ConfidencePct}}%{{if ne .AutomationType "none"}} &middot; type: <code>{{.AutomationType}}</code>{{end}}</div>
     </div>
   </div>
+  <div class="bds-live" id="bds-live"></div>
   {{if .Contradictions}}<ul class="bds-contra">
   {{range .Contradictions}}<li><b style="color:#cf222e">{{.Title}}</b> — {{.Explanation}}{{if .Value}} <code style="font-size:.75rem">{{.Value}}</code>{{end}}</li>{{end}}
   </ul>{{end}}

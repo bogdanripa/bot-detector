@@ -564,13 +564,13 @@
     var h = '<div class="bds-head"><h2>Live report — checks so far</h2>' +
       '<button class="bds-reset" type="button" title="Clear the running tally and start a fresh session">Reset</button></div>';
     if (report.allow) h += '<div class="bds-allow">✓ Allowlisted — ' + esc(report.allow) + ". Enforcement bypassed.</div>";
-    h += '<div class="bds-live" id="bds-live"></div>';
     h += '<div class="bds-banner" style="border-color:' + color + '">';
     h += '<div class="bds-pct" style="color:' + color + '">' + sc.percent + "%</div><div>";
     h += '<div style="font-weight:700;color:' + color + '">' + icon + " " + esc(sc.band.toUpperCase()) + "</div>";
     h += '<div class="bds-sub">automation probability ' + sc.percent + "% &middot; confidence " + Math.round(sc.confidence * 100) + "%";
     if (sc.automationType && sc.automationType !== "none") h += " &middot; type: <code>" + esc(sc.automationType) + "</code>";
     h += "</div></div></div>";
+    h += '<div class="bds-live" id="bds-live"></div>';
     if (report.contradictions && report.contradictions.length) {
       h += '<ul class="bds-contra">';
       report.contradictions.forEach(function (c) {
