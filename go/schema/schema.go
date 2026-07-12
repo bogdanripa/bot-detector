@@ -226,9 +226,15 @@ type Finding struct {
 	Title       string  `json:"title"`
 	Explanation string  `json:"explanation"`
 	Severity    string  `json:"severity,omitempty"`
-	Status      string  `json:"status,omitempty"` // pass|warn|fail|unavailable
+	Status      string  `json:"status,omitempty"` // pass|fail|warn|pending|inconclusive|unavailable
 	Weight      float64 `json:"weight"`
 	Value       string  `json:"value,omitempty"`
-	Layer       int     `json:"layer,omitempty"`
-	Group       string  `json:"group,omitempty"`
+	// Index orders checks in the UI: lower = server-side (transport/IP/TLS),
+	// higher = client-side (browser env, then live behavior). Shown desc.
+	Index int `json:"index"`
+	// Confidence (0..1) is how much evidence backs this check's status. It is
+	// 1.0 for deterministic checks and grows with observations for the live
+	// behavioral ones, which start pending and cross thresholds as the user acts.
+	Confidence float64 `json:"confidence"`
+	Group      string  `json:"group,omitempty"`
 }

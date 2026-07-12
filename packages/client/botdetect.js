@@ -267,11 +267,12 @@
       h += "</ul>";
     }
     h += '<h3>Checks</h3><table class="bd-checks">';
-    (report.checks || []).forEach(function (c) {
-      var badge = { pass: "PASS", warn: "WARN", fail: "FAIL", unavailable: "N/A", pending: "PENDING" }[c.status] || c.status;
-      var col = { pass: "#1a7f37", warn: "#bf8700", fail: "#cf222e", unavailable: "#888", pending: "#57606a" }[c.status] || "#555";
+    sortChecks(report.checks || []).forEach(function (c) {
+      var badge = STATUS_LABEL[c.status] || c.status;
+      var col = STATUS_COLOR[c.status] || "#555";
+      var conf = (c.index >= 80) ? ' <span class=bd-exp>· ' + Math.round((c.confidence || 0) * 100) + "% confidence</span>" : "";
       h += '<tr><td><span class="bd-badge" style="background:' + col + '">' + badge + "</span></td>";
-      h += "<td><b>" + esc(c.title) + "</b><br><span class=bd-exp>" + esc(c.explanation) + "</span></td>";
+      h += "<td><b>" + esc(c.title) + "</b>" + conf + "<br><span class=bd-exp>" + esc(c.explanation) + "</span></td>";
       h += "<td class=bd-val>" + esc(c.value || "") + "</td></tr>";
     });
     h += "</table>";
@@ -463,16 +464,27 @@
       h += "</ul>";
     }
     h += '<table class="bds-checks">';
-    (report.checks || []).forEach(function (c) {
-      var badge = { pass: "PASS", warn: "WARN", fail: "FAIL", unavailable: "N/A", pending: "PENDING" }[c.status] || c.status;
-      var col = { pass: "#1a7f37", warn: "#bf8700", fail: "#cf222e", unavailable: "#888", pending: "#57606a" }[c.status] || "#555";
-      h += '<tr><td><span class="bds-badge" style="background:' + col + '">' + esc(badge) + "</span></td>";
+    sortChecks(report.checks || []).forEach(function (c) {
+      var badge = STATUS_LABEL[c.status] || c.status;
+      var col = STATUS_COLOR[c.status] || "#555";
+      var conf = (c.index >= 80) ? '<br><span class="bds-conf">' + Math.round((c.confidence || 0) * 100) + "%</span>" : "";
+      h += '<tr><td><span class="bds-badge" style="background:' + col + '">' + esc(badge) + "</span>" + conf + "</td>";
       h += "<td><b>" + esc(c.title) + '</b><br><span class="bds-exp">' + esc(c.explanation) + "</span></td>";
       h += '<td class="bds-val">' + esc(c.value || "") + "</td></tr>";
     });
     h += "</table>";
     el.innerHTML = h;
     behaviorMonitor.render(); // refill the live block the rebuild just cleared
+  }
+  // Shared status presentation + ordering (index desc, then status severity).
+  var STATUS_LABEL = { pass: "PASS", warn: "WARN", fail: "FAIL", unavailable: "N/A", pending: "PENDING", inconclusive: "UNCLEAR" };
+  var STATUS_COLOR = { pass: "#1a7f37", warn: "#bf8700", fail: "#cf222e", unavailable: "#888", pending: "#57606a", inconclusive: "#8250df" };
+  var STATUS_RANK = { fail: 0, warn: 1, inconclusive: 2, pending: 3, unavailable: 4, pass: 5 };
+  function sortChecks(list) {
+    return list.slice().sort(function (a, b) {
+      if ((a.index || 0) !== (b.index || 0)) return (b.index || 0) - (a.index || 0);
+      return (STATUS_RANK[a.status] || 9) - (STATUS_RANK[b.status] || 9);
+    });
   }
 
   // ---------- drop-in autostart (docs/15) ----------
@@ -541,6 +553,17 @@
       form = document.querySelector("form");
       if (form) {
         var flush = instrumentForm(form);
+        if (BOOT.mode !== "test") {
+          // Live typing: re-post behavior as the user types (throttled) so the
+          // behavior_scripted check moves pending → inconclusive → pass/fail on
+          // screen instead of sitting at "awaiting form typing" until submit.
+          var liveT = 0;
+          form.addEventListener("input", function () {
+            var now = Date.now();
+            if (now - liveT < 400) return; liveT = now;
+            post("form", { layer1: passiveF, behavior: flush(), traps: readTraps(form) }).then(renderSidebar);
+          }, true);
+        }
         form.addEventListener("submit", function (e) {
           var payload = { layer1: passiveF, behavior: flush(), traps: readTraps(form) };
           e.preventDefault();

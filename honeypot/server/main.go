@@ -528,6 +528,7 @@ var checksTmpl = template.Must(template.New("checks").Parse(`
   .bds-checks { border-collapse: collapse; width: 100%; }
   .bds-checks td { border-top: 1px solid #8883; padding: .35rem .25rem; vertical-align: top; }
   .bds-badge { color: #fff; font-size: .62rem; font-weight: 700; padding: .1rem .35rem; border-radius: 4px; }
+  .bds-conf { display: inline-block; margin-top: .18rem; font-size: .6rem; color: #888; white-space: nowrap; }
   .bds-exp { color: #888; font-size: .78rem; }
   .bds-val { font-family: ui-monospace, monospace; font-size: .7rem; color: #777;
               overflow-wrap: anywhere; width: 32%; }
@@ -556,7 +557,7 @@ var checksTmpl = template.Must(template.New("checks").Parse(`
   </ul>{{end}}
   <table class="bds-checks">
   {{range .Checks}}<tr>
-    <td><span class="bds-badge" style="background:{{.Color}}">{{.Badge}}</span></td>
+    <td><span class="bds-badge" style="background:{{.Color}}">{{.Badge}}</span>{{if .ShowConf}}<br><span class="bds-conf">{{.ConfPct}}%</span>{{end}}</td>
     <td><b>{{.Title}}</b><br><span class="bds-exp">{{.Explanation}}</span></td>
     <td class="bds-val">{{.Value}}</td>
   </tr>{{end}}
@@ -574,7 +575,14 @@ var checksTmpl = template.Must(template.New("checks").Parse(`
 type findingView struct {
 	schema.Finding
 	Badge, Color string
+	ShowConf     bool
+	ConfPct      int
 }
+
+var badgeLabels = map[string]string{"pass": "PASS", "warn": "WARN", "fail": "FAIL",
+	"unavailable": "N/A", "pending": "PENDING", "inconclusive": "UNCLEAR"}
+var badgeColors = map[string]string{"pass": "#1a7f37", "warn": "#bf8700", "fail": "#cf222e",
+	"unavailable": "#888", "pending": "#57606a", "inconclusive": "#8250df"}
 
 func renderChecksHTML(report schema.Report) string {
 	bandColor := map[string]string{"human": "#1a7f37", "suspicious": "#bf8700", "automated": "#cf222e"}
@@ -593,14 +601,19 @@ func renderChecksHTML(report schema.Report) string {
 			Contradictions: report.Contradictions,
 		},
 	}
-	badge := map[string]string{"pass": "PASS", "warn": "WARN", "fail": "FAIL", "unavailable": "N/A", "pending": "PENDING"}
-	col := map[string]string{"pass": "#1a7f37", "warn": "#bf8700", "fail": "#cf222e", "unavailable": "#888", "pending": "#57606a"}
 	for _, c := range report.Checks {
-		b, cl := badge[c.Status], col[c.Status]
+		b, cl := badgeLabels[c.Status], badgeColors[c.Status]
 		if b == "" {
 			b, cl = c.Status, "#555"
 		}
-		v.Checks = append(v.Checks, findingView{Finding: c, Badge: b, Color: cl})
+		// Show a live confidence figure for the behavioral checks (index >= 80),
+		// which is the set that evolves as the user acts.
+		fv := findingView{Finding: c, Badge: b, Color: cl}
+		if c.Index >= 80 {
+			fv.ShowConf = true
+			fv.ConfPct = int(c.Confidence*100 + 0.5)
+		}
+		v.Checks = append(v.Checks, fv)
 	}
 	var buf bytes.Buffer
 	if err := checksTmpl.Execute(&buf, v); err != nil {

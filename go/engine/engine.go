@@ -42,6 +42,34 @@ func New(configJSON []byte) (*Engine, error) {
 	return &Engine{cfg: c}, nil
 }
 
+// checkIndex orders checks in the UI. Lower = server-side (transport/IP/TLS),
+// higher = client-side (browser environment, then live behavior). Rendered desc,
+// so the dynamic behavioral checks sit on top and server transport at the bottom.
+var checkIndex = map[string]int{
+	// server-side transport / network / funnel (low)
+	"ip_datacenter": 10, "tls_ua_vendor_mismatch": 12, "header_order_is_library": 14,
+	"missing_client_hints": 20, "missing_sec_fetch": 21, "minimal_accept": 22,
+	"funnel_bypass": 30, "cross_nav_inconsistency": 31,
+	// client-side browser environment — deterministic once JS runs (mid)
+	"implausible_hardware": 50, "software_webgl": 51, "no_plugins": 52, "languages_empty": 53,
+	"permissions_contradiction": 54, "headless_ua": 55, "canvas_blocked": 56, "impossible_geometry": 57,
+	"chrome_runtime_missing": 58, "navigator_webdriver": 60, "cdc_artifacts": 61, "selenium_attributes": 62,
+	"playwright_bindings": 63, "phantom_globals": 64, "node_globals": 65, "cdp_runtime_enable": 66,
+	"anti_tamper_patched": 67,
+	// client-side live behavior — confidence grows as the user acts (high)
+	"scroll_teleport": 82, "click_no_trail": 84, "behavior_scripted": 86, "clean_env_agentic_behavior": 88,
+}
+
+// confFor is the default confidence for a deterministic finding: 1.0 once a
+// conclusion is reached (pass/fail/warn), 0 while there is nothing to conclude.
+func confFor(status string) float64 {
+	switch status {
+	case "pass", "fail", "warn":
+		return 1.0
+	}
+	return 0.0
+}
+
 // Score runs every rule against the SignalSet and produces a Report.
 func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 	checks := []schema.Finding{}
@@ -50,7 +78,7 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 	var transportAccum, behaviorAccum float64
 	fired := map[string]bool{}
 
-	// fire records a signal check and adds its log-odds weight.
+	// fire records a signal check as fired and adds its log-odds weight.
 	fire := func(id, value string) {
 		def, ok := e.cfg.Signals[id]
 		if !ok {
@@ -60,6 +88,7 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 		checks = append(checks, schema.Finding{
 			ID: id, Title: def.Title, Explanation: def.Explanation,
 			Status: def.Status, Weight: def.Weight, Value: value,
+			Index: checkIndex[id], Confidence: 1.0,
 		})
 		switch id {
 		case "behavior_scripted":
@@ -76,9 +105,42 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 		checks = append(checks, schema.Finding{
 			ID: id, Title: def.Title, Explanation: def.Explanation,
 			Status: status, Weight: 0, Value: value,
+			Index: checkIndex[id], Confidence: confFor(status),
 		})
 	}
 	pass := func(id, value string) { record(id, "pass", value) }
+	// recordConf records a non-weighted check with an explicit status+confidence
+	// (the live behavioral checks, which cross thresholds as the user acts).
+	recordConf := func(id, status, value string, conf float64) {
+		def, ok := e.cfg.Signals[id]
+		if !ok {
+			return
+		}
+		checks = append(checks, schema.Finding{
+			ID: id, Title: def.Title, Explanation: def.Explanation,
+			Status: status, Weight: 0, Value: value,
+			Index: checkIndex[id], Confidence: conf,
+		})
+	}
+	// fireConf fires a check with an explicit status+confidence (adds weight).
+	fireConf := func(id, status, value string, conf float64) {
+		def, ok := e.cfg.Signals[id]
+		if !ok {
+			return
+		}
+		fired[id] = true
+		checks = append(checks, schema.Finding{
+			ID: id, Title: def.Title, Explanation: def.Explanation,
+			Status: status, Weight: def.Weight, Value: value,
+			Index: checkIndex[id], Confidence: conf,
+		})
+		switch id {
+		case "behavior_scripted":
+			behaviorAccum += def.Weight
+		default:
+			L += def.Weight
+		}
+	}
 	// recordContra logs a contradiction rule that was evaluated and did NOT fire.
 	recordContra := func(id, status, value string) {
 		def, ok := e.cfg.Contradictions[id]
@@ -88,6 +150,7 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 		checks = append(checks, schema.Finding{
 			ID: id, Title: def.Title, Explanation: def.Explanation,
 			Status: status, Weight: 0, Value: value,
+			Index: checkIndex[id], Confidence: confFor(status),
 		})
 	}
 	passContra := func(id, value string) { recordContra(id, "pass", value) }
@@ -98,7 +161,8 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 		}
 		fired[id] = true
 		f := schema.Finding{ID: id, Title: def.Title, Explanation: def.Explanation,
-			Severity: def.Severity, Weight: def.Weight, Value: value, Status: "fail"}
+			Severity: def.Severity, Weight: def.Weight, Value: value, Status: "fail",
+			Index: checkIndex[id], Confidence: 1.0}
 		contradictions = append(contradictions, f)
 		if id == "tls_ua_vendor_mismatch" || id == "header_order_is_library" {
 			transportAccum += def.Weight
@@ -270,55 +334,76 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 		}
 	}
 
-	// ---- Behavior / provenance rules ----
+	// ---- Behavior / provenance rules (client-side, live) ----
+	// These carry a confidence that starts at 0 (pending) and rises as the user
+	// acts, crossing thresholds: pending → inconclusive → pass/fail.
 	humanScroll := ss.ScrollToLink != nil && ss.ScrollToLink.AnyUserGesture
 	if st := ss.ScrollToLink; st != nil && st.ReachedLink {
 		if st.Teleport && !st.AnyUserGesture && st.LandedPixelAligned {
-			fire("scroll_teleport", "no gesture, pixel-aligned")
+			fireConf("scroll_teleport", "fail", "no gesture, pixel-aligned", 1.0)
 		} else if st.AnyUserGesture {
-			pass("scroll_teleport", "human scroll gesture")
+			recordConf("scroll_teleport", "pass", "human scroll gesture", 1.0)
 		} else {
-			record("scroll_teleport", "unavailable", "no scroll was needed")
+			recordConf("scroll_teleport", "inconclusive", "reached the link without a scroll", 0.4)
 		}
 	} else {
-		record("scroll_teleport", "pending", "awaiting scroll on the landing page")
+		recordConf("scroll_teleport", "pending", "awaiting scroll on the landing page", 0)
 	}
 	if lc := ss.LinkClick; lc != nil && lc.Occurred {
 		// A trackpad/wheel scroll moves the page under a parked pointer, so a
 		// genuine scroll gesture counts as approach provenance too.
 		if lc.AtExactIntegerCenter {
-			fire("click_no_trail", "click at exact element center")
+			fireConf("click_no_trail", "fail", "click at exact element center", 1.0)
 		} else if lc.ApproachPoints == 0 && lc.CoalescedNearby == 0 && !humanScroll {
-			fire("click_no_trail", "no approach trail or scroll gesture")
+			fireConf("click_no_trail", "fail", "no approach trail or scroll gesture", 1.0)
 		} else {
-			pass("click_no_trail", "human approach (pointer trail or scroll gesture)")
+			recordConf("click_no_trail", "pass", "human approach (pointer trail or scroll gesture)", 1.0)
 		}
 	} else {
-		record("click_no_trail", "pending", "awaiting the landing-page link click")
+		recordConf("click_no_trail", "pending", "awaiting the landing-page link click", 0)
 	}
-	if b := ss.Behavior; b == nil {
-		record("behavior_scripted", "pending", "awaiting form typing")
-	} else {
-		scripted := false
+	// Typing cadence: confidence grows with observed keystrokes (~12 ⇒ certain),
+	// so the check moves pending → inconclusive → pass/fail live as you type.
+	{
+		b := ss.Behavior
+		totalKeys, noKeyFill, metronomic := 0, false, false
 		reasons := []string{}
-		if b.FillToSubmitMs > 0 && b.FillToSubmitMs < 400 {
-			scripted = true
+		if b != nil {
+			for _, f := range b.Fields {
+				totalKeys += f.Keydowns
+				if f.FilledWithoutKeys && !f.AutofillPseudo {
+					noKeyFill = true
+					reasons = append(reasons, f.Name+":no-keys")
+				}
+				if f.Keydowns >= 4 && f.InterKeyStdev < 3 {
+					metronomic = true
+					reasons = append(reasons, f.Name+":metronomic")
+				}
+			}
+		}
+		subFast := b != nil && b.FillToSubmitMs > 0 && b.FillToSubmitMs < 400 && totalKeys > 0
+		if subFast {
 			reasons = append(reasons, "sub-400ms fill")
 		}
-		for _, f := range b.Fields {
-			if f.FilledWithoutKeys && !f.AutofillPseudo {
-				scripted = true
-				reasons = append(reasons, f.Name+":no-keys")
-			}
-			if f.Keydowns >= 4 && f.InterKeyStdev < 3 {
-				scripted = true
-				reasons = append(reasons, f.Name+":metronomic")
-			}
+		conf := float64(totalKeys) / 12.0
+		if conf > 1 {
+			conf = 1
 		}
-		if scripted {
-			fire("behavior_scripted", strings.Join(reasons, ","))
-		} else {
-			pass("behavior_scripted", "human-like typing")
+		switch {
+		case noKeyFill:
+			// values appeared with no keystrokes at all — a strong tell regardless of count
+			fireConf("behavior_scripted", "fail", strings.Join(reasons, ","), 0.9)
+		case totalKeys == 0:
+			recordConf("behavior_scripted", "pending", "awaiting form typing", 0)
+		case conf < 0.5:
+			recordConf("behavior_scripted", "inconclusive",
+				"not enough typing yet ("+itoa(totalKeys)+" keys, "+pct(conf)+" confidence)", conf)
+		case metronomic || subFast:
+			fireConf("behavior_scripted", "fail",
+				strings.Join(reasons, ",")+" ("+pct(conf)+" confidence)", conf)
+		default:
+			recordConf("behavior_scripted", "pass",
+				"human-like typing ("+itoa(totalKeys)+" keys, "+pct(conf)+" confidence)", conf)
 		}
 	}
 	if tr := ss.Traps; tr != nil {
@@ -518,9 +603,17 @@ func round(f float64, places int) float64 {
 	return math.Round(f*p) / p
 }
 func sortChecks(c []schema.Finding) []schema.Finding {
-	order := map[string]int{"fail": 0, "warn": 1, "pending": 2, "unavailable": 3, "pass": 4}
+	// Primary: index descending (client-side/behavioral on top, server at the
+	// bottom). Secondary: severity of the status within an index band.
+	order := map[string]int{"fail": 0, "warn": 1, "inconclusive": 2, "pending": 3, "unavailable": 4, "pass": 5}
 	sort.SliceStable(c, func(i, j int) bool {
+		if c[i].Index != c[j].Index {
+			return c[i].Index > c[j].Index
+		}
 		return order[c[i].Status] < order[c[j].Status]
 	})
 	return c
 }
+
+// pct formats a 0..1 confidence as a whole percent.
+func pct(f float64) string { return itoa(int(f*100+0.5)) + "%" }
