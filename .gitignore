@@ -27,3 +27,6 @@ package-lock.json
 
 # autocert cert cache (runtime)
 certs/
+
+# scratch debug-page dumps
+/x.html
