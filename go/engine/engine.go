@@ -49,6 +49,7 @@ var checkIndex = map[string]int{
 	// server-side transport / network / funnel (low)
 	"ip_datacenter": 10, "tls_ua_vendor_mismatch": 12, "header_order_is_library": 14,
 	"missing_client_hints": 20, "missing_sec_fetch": 21, "minimal_accept": 22, "headless_ua": 24,
+	"ai_realtime_agent": 26,
 	"funnel_bypass": 30, "cross_nav_inconsistency": 31,
 	// client-side browser environment — deterministic once JS runs (mid)
 	"implausible_hardware": 50, "software_webgl": 51, "no_plugins": 52, "languages_empty": 53,
@@ -58,6 +59,21 @@ var checkIndex = map[string]int{
 	"anti_tamper_patched": 67,
 	// client-side live behavior — confidence grows as the user acts (high)
 	"scroll_teleport": 82, "click_no_trail": 84, "behavior_scripted": 86, "clean_env_agentic_behavior": 88,
+}
+
+// realtimeAgentTokens are UA substrings of on-demand, user-triggered AI fetchers
+// (NOT indexing crawlers). These are treated as automation; indexing crawlers
+// are allowlisted separately in the honeypot.
+var realtimeAgentTokens = []string{"ChatGPT-User", "Perplexity-User", "Claude-User", "Meta-ExternalFetcher"}
+
+// firstContains returns the first substring present in s, or "".
+func firstContains(s string, subs []string) string {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return sub
+		}
+	}
+	return ""
 }
 
 // confFor is the default confidence for a deterministic finding: 1.0 once a
@@ -285,6 +301,13 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 			fire("headless_ua", "HeadlessChrome in UA")
 		} else if l2.UserAgent != "" {
 			pass("headless_ua", "no HeadlessChrome token")
+		}
+		// Real-time, user-triggered AI fetchers are automation acting live for a
+		// user — distinct from indexing crawlers, which the allowlist lets pass.
+		if tok := firstContains(l2.UserAgent, realtimeAgentTokens); tok != "" {
+			fire("ai_realtime_agent", tok)
+		} else if l2.UserAgent != "" {
+			pass("ai_realtime_agent", "not a real-time AI agent")
 		}
 		chromium := strings.Contains(l2.UserAgent, "Chrome/") || l2.SecChUa != ""
 		if chromium {

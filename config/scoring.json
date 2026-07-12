@@ -153,6 +153,12 @@
       "status": "warn",
       "title": "Scripted form fill",
       "explanation": "Sub-human fill time, zero-variance typing, or values set with no keystrokes."
+    },
+    "ai_realtime_agent": {
+      "weight": 2.5,
+      "status": "fail",
+      "title": "Real-time AI agent",
+      "explanation": "User-Agent of an on-demand AI fetcher (ChatGPT-User, Perplexity-User, Claude-User, Meta-ExternalFetcher) \u2014 a user driving an agent in real time, not an indexer."
     }
   },
   "contradictions": {

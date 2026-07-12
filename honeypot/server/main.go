@@ -152,6 +152,31 @@ func redirectHTTPS(w http.ResponseWriter, r *http.Request) {
 // BD_UA_ALLOWLIST is a comma-separated list of User-Agent substrings to trust.
 var uaAllowlist = splitAndTrim(os.Getenv("BD_UA_ALLOWLIST"))
 
+// aiIndexers are indexing / training AI crawlers we WANT to let index content —
+// they bypass enforcement. Verified by UA here; combine with published IP ranges
+// for spoof-proofing (see BD_UA_ALLOWLIST note / follow-up).
+var aiIndexers = []string{
+	"GPTBot", "OAI-SearchBot", // OpenAI (crawl + search index)
+	"ClaudeBot", "anthropic-ai", "Claude-SearchBot", // Anthropic
+	"PerplexityBot",                            // Perplexity (index)
+	"CCBot",                                    // Common Crawl
+	"Amazonbot", "Bytespider", "DuckAssistBot", // misc AI/search crawlers
+	"Meta-ExternalAgent", // Meta crawler (distinct from Meta-ExternalFetcher)
+}
+
+// aiRealtimeAgents are on-demand, user-triggered AI fetchers — a user driving an
+// agent in real time. These are treated as automation and never allowlisted.
+var aiRealtimeAgents = []string{"ChatGPT-User", "Perplexity-User", "Claude-User", "Meta-ExternalFetcher"}
+
+func firstSub(s string, subs []string) string {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return sub
+		}
+	}
+	return ""
+}
+
 // verifiedCrawlers maps a UA token to the reverse-DNS suffixes its IPs must
 // resolve to (forward-confirmed) — the standard way to verify a good crawler,
 // since the UA string alone is trivially spoofable.
@@ -185,6 +210,15 @@ func splitAndTrim(s string) []string {
 // allowDecision reports whether the request is allowlisted and a human reason.
 func allowDecision(r *http.Request, ip string) (bool, string) {
 	ua := r.Header.Get("User-Agent")
+	// Real-time AI agents are automation acting for a user right now — never
+	// allowlisted (checked first so they can't ride an indexer-token match).
+	if firstSub(ua, aiRealtimeAgents) != "" {
+		return false, ""
+	}
+	// Indexing / training crawlers: let them index our content.
+	if tok := firstSub(ua, aiIndexers); tok != "" {
+		return true, "indexing crawler (" + tok + ")"
+	}
 	for _, sub := range uaAllowlist { // operator-trusted UA
 		if strings.Contains(ua, sub) {
 			return true, "trusted User-Agent (allowlist: " + sub + ")"
