@@ -110,6 +110,7 @@ type LinkClick struct {
 	ApproachPoints            int  `json:"approachPoints"`
 	CoalescedNearby           int  `json:"coalescedNearby"`
 	AtExactIntegerCenter      bool `json:"atExactIntegerCenter"`
+	KeyboardActivated         bool `json:"keyboardActivated"` // click event with detail=0: Enter/Space on a focused link
 	DwellBeforeClickMs        int  `json:"dwellBeforeClickMs"`
 	SourceCapabilitiesPresent bool `json:"sourceCapabilitiesPresent"`
 }

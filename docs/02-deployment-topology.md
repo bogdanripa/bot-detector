@@ -92,10 +92,11 @@ on a verdict. The root `/` is a chooser.
 | Client-side | On load / on submit, fetches the full verdict; at/above the threshold, **redirects to `/test/forbidden`**. | Never redirects; the result page **renders the full report** (checks + scores + contradictions + probability). |
 | Result page | A generic "access granted" (no signals revealed) — or a 403 if the final verdict crosses the threshold. | The full report. |
 
-**Enforce threshold (`BD_ENFORCE_BAND`).** Default **`suspicious`** — *aggressive*:
-block anything not clearly `human` ("better block than not"). Set to `automated` for
-conservative blocking. The threshold is applied identically at all three gates
-(server-only, client redirect, final result).
+**Enforce threshold (`BD_ENFORCE_BAND`).** Default **`automated`** — *conservative*:
+block only what is conclusively automated. Set to `suspicious` to also block the
+amber middle band — aggressive, and prone to false positives on real humans with
+VPNs, privacy extensions, or an open DevTools panel. The threshold is applied
+identically at all three gates (server-only, client redirect, final result).
 
 The **server-only gate** fires on the strong transport/HTTP signals available
 without a browser (TLS-vs-UA mismatch, library header order, funnel bypass) — so a

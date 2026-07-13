@@ -194,7 +194,11 @@
         Math.abs(e.clientX - (rr.left + rr.width / 2)) < 1 && Math.abs(e.clientY - (rr.top + rr.height / 2)) < 1;
       return {
         occurred: true, isTrusted: e.isTrusted, approachPoints: near.length, coalescedNearby: coalesced,
-        atExactIntegerCenter: center, dwellBeforeClickMs: Math.round(performance.now()),
+        atExactIntegerCenter: center,
+        // Enter/Space on a focused link fires a click with detail=0 that browsers
+        // place at the element center — a human input path, not an injected click.
+        keyboardActivated: e.detail === 0,
+        dwellBeforeClickMs: Math.round(performance.now()),
         sourceCapabilitiesPresent: !!e.sourceCapabilities
       };
     }
@@ -261,13 +265,20 @@
         if (e.key === "Tab") tabUsed = true; if (e.key === "Backspace") f.backspaces++;
       });
       el.addEventListener("paste", function () { mark(); f.pasteEvents++; });
-      el.addEventListener("input", function () {
-        try { f.autofillPseudo = el.matches(":autofill") || el.matches(":-webkit-autofill"); } catch (e) {}
+      el.addEventListener("input", function (ev) {
+        // Each selector in its own try: a browser that throws on ":autofill"
+        // must still get to try its vendor-prefixed form.
+        try { if (el.matches(":autofill")) f.autofillPseudo = true; } catch (e) {}
+        try { if (el.matches(":-webkit-autofill")) f.autofillPseudo = true; } catch (e) {}
         // Only free-text fields can be "filled without keystrokes" suspiciously;
         // selects/checkboxes/radios are set by clicking, which is normal.
         if (textField && f.keydowns === 0 && f.pasteEvents === 0 && el.value && el.value.length > 0) {
           f.filledWithoutKeys = true;
-          if (!f.autofillPseudo) behaviorMonitor.markNoKeyFill(); // cross-page bot .value tell
+          // Cross-page bot .value tell — but only on a TRUSTED input event.
+          // Password-manager extensions fill fields by dispatching synthetic
+          // (isTrusted=false) input events; CDP fills (Playwright fill()) arrive
+          // trusted with no keystrokes, which is exactly what this catches.
+          if (!f.autofillPseudo && ev.isTrusted) behaviorMonitor.markNoKeyFill();
         }
       });
     });
@@ -430,7 +441,10 @@
     function onPointerDown(e) {
       if (fromSidebar(e)) return;
       if (e.isTrusted === false) observe(true, "synthetic click (isTrusted=false)");
-      else observe(exactCenter(e), "injected click (exact element center)");
+      // Exact-center alone isn't proof — a careful human hits it too. Suspicious
+      // only when the click also arrives with NO recent pointer/gesture activity.
+      else observe(exactCenter(e) && tnow() - lastMoveMs > 1500 && tnow() - lastGestureMs > 1500,
+        "injected click (exact center, no approach)");
       recordClickPlacement(e);
     }
     // Accumulate WHERE clicks land within their target (relative 0..1 offset),
@@ -623,7 +637,7 @@
 
   // ---------- honeypot per-step auto-init ----------
   var FORBIDDEN = BOOT.forbidden || "/test/forbidden";
-  var ENFORCE = BOOT.enforceBand || "suspicious";
+  var ENFORCE = BOOT.enforceBand || "automated";
   function bandRank(b) { return b === "automated" ? 2 : b === "suspicious" ? 1 : 0; }
   function isBot(report) { return report && report.score && bandRank(report.score.band) >= bandRank(ENFORCE); }
   // In test mode, redirect a detected bot; returns true if it redirected.

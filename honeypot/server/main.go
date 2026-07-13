@@ -43,9 +43,10 @@ var (
 	clientJS    = os.Getenv("BD_CLIENT_JS") // "" ⇒ embedded
 	scoringPath = os.Getenv("BD_SCORING")   // "" ⇒ embedded
 	addr        = envOr("BD_ADDR", ":8443")
-	// enforceBand is the /test blocking threshold. "suspicious" (default) is
-	// aggressive: block anything not clearly human. "automated" is conservative.
-	enforceBand = envOr("BD_ENFORCE_BAND", "suspicious")
+	// enforceBand is the /test blocking threshold. "automated" (default) blocks
+	// only conclusive bots — "suspicious" also blocks anything not clearly human,
+	// which false-positives on privacy tools, VPNs, and open DevTools panels.
+	enforceBand = envOr("BD_ENFORCE_BAND", "automated")
 )
 
 func bandRank(b string) int {
@@ -407,7 +408,7 @@ func readClient() ([]byte, error) {
 // ---- sessions ----
 
 type snapshot struct {
-	ja4, ua, ip string
+	stack, ua, ip string
 }
 type session struct {
 	mu               sync.Mutex // guards all mutable fields below (see funnelHandler/handleAnalyze)
@@ -490,7 +491,10 @@ func captureConn(s *session, r *http.Request, step string) {
 		s.seen[step] = true
 		s.StepOrder = append(s.StepOrder, step)
 	}
-	s.Snapshots = append(s.Snapshots, snapshot{ja4: l3.JA4, ua: l2.UserAgent, ip: l3.IP})
+	// Compare the TLS stack CLASS across navigations, not the raw JA4: session
+	// resumption changes a real browser's ClientHello (pre_shared_key), so raw
+	// JA4 drifts between the first and a resumed connection of the same browser.
+	s.Snapshots = append(s.Snapshots, snapshot{stack: l3.StackClass, ua: l2.UserAgent, ip: l3.IP})
 	s.LastSecFetchUser = l2.SecFetchUser
 	s.LastReferer = l2.Referer
 }
@@ -508,12 +512,12 @@ func (s *session) funnel() *schema.FunnelState {
 	f.LinkClickWasTrusted = s.LinkClick != nil && s.LinkClick.IsTrusted && s.LinkClick.Occurred
 	// cross-nav consistency across snapshots
 	f.CrossNavConsistent = true
-	var ja4, ua, ip string
+	var stack, ua, ip string
 	for _, sn := range s.Snapshots {
-		if sn.ja4 != "" {
-			if ja4 == "" {
-				ja4 = sn.ja4
-			} else if ja4 != sn.ja4 {
+		if sn.stack != "" {
+			if stack == "" {
+				stack = sn.stack
+			} else if stack != sn.stack {
 				f.CrossNavConsistent = false
 			}
 		}

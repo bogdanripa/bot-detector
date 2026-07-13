@@ -47,10 +47,10 @@
       "explanation": "Buffer/process/require present \u2014 Node context leaking into the page."
     },
     "cdp_runtime_enable": {
-      "weight": 4.5,
-      "status": "fail",
+      "weight": 2.0,
+      "status": "warn",
       "title": "CDP Runtime.enable leak",
-      "explanation": "A console-getter fired, revealing a Chrome DevTools Protocol client (Puppeteer/Playwright/Selenium)."
+      "explanation": "A console-getter fired, revealing a Chrome DevTools Protocol client (Puppeteer/Playwright/Selenium) — but an open DevTools panel triggers this too, so alone it is a warning, not a conviction."
     },
     "anti_tamper_patched": {
       "weight": 2.4,
@@ -196,7 +196,7 @@
       "weight": 3.0,
       "severity": "high",
       "title": "Fingerprint changed between pages",
-      "explanation": "JA4/UA/IP changed across the funnel's navigations \u2014 a multi-tool pipeline."
+      "explanation": "TLS stack class/UA/IP changed across the funnel's navigations \u2014 a multi-tool pipeline. (Raw JA4 drift alone is tolerated: TLS session resumption changes the ClientHello for real browsers.)"
     },
     "funnel_bypass": {
       "weight": 2.6,
