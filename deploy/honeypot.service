@@ -18,7 +18,9 @@ Environment=BD_ADDR=:443
 # "DNS only", grey cloud) or Layer 3 is lost.
 Environment=BD_DOMAIN=CHANGE-ME.duckdns.org
 Environment=BD_CERT_CACHE=/opt/honeypot/certs
-Environment=BD_ENFORCE_BAND=suspicious
+# "automated" (default) blocks only conclusive bots; "suspicious" is aggressive
+# and can false-positive on VPNs, privacy tools, and open DevTools panels.
+Environment=BD_ENFORCE_BAND=automated
 # Optional: trusted User-Agent substrings that bypass /test enforcement.
 # (Verified good bots — Googlebot/Bingbot via rDNS, Web Bot Auth — are always allowed.)
 # Environment=BD_UA_ALLOWLIST=MyMonitor/1.0,UptimeRobot

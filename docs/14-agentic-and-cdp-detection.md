@@ -512,7 +512,7 @@ one pivotal new idea.
 
 | Group | Example signals | Weight |
 |-------|-----------------|:------:|
-| CDP leaks (§3) | `runtimeEnableLeak` | +4.5 (decisive when present) |
+| CDP leaks (§3) | `runtimeEnableLeak` | +2.0 (a warning, not decisive — an open DevTools panel fires it on a real human) |
 | | `sourceUrlLeak`, `mainWorldExecution`, `__pwInitScripts`, `exposeFunctionLeak` | +2.5–3.5 |
 | Input provenance (§4) | click with no approach trail + no coalesced events + exact-integer center | +3.5 (combined) |
 | | `sourceCapabilities==null` / inconsistent across the event cascade; missing hover/move prefix | +2.5 |

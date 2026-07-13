@@ -24,16 +24,15 @@ reliably captured. Open <https://localhost:8443/> and accept the cert warning.
 
 The root (`/`) is a chooser linking two modes, each running the same 3-step funnel:
 
-- **`/test` — production mode.** Enforces, **aggressively by default** — it blocks
-  anything not clearly `human` (i.e. `suspicious` *or* `automated`; "better block
-  than not"). On every navigation the server computes a **server-only** verdict
+- **`/test` — production mode.** Enforces — by default it blocks what is
+  conclusively `automated`. On every navigation the server computes a **server-only** verdict
   (TLS/JA4 + header order + IP, before any client JS) and returns **HTTP 403** (the
   "not allowed" page) at/above the threshold. If a client passes the server gate but
   the full client+server verdict crosses it, the client **redirects to
-  `/test/forbidden`**. No report is shown. Tune with `BD_ENFORCE_BAND=suspicious`
-  (default, aggressive) or `automated` (conservative). A real browser still passes
-  the server gate on first paint — the aggressive threshold catches the *suspicious
-  middle* (VMs, odd/stealth configs), not clean browsers.
+  `/test/forbidden`**. No report is shown. Tune with `BD_ENFORCE_BAND=automated`
+  (default, conservative — blocks only conclusive bots) or `suspicious`
+  (aggressive — also blocks the amber middle: VMs, odd/stealth configs, but risks
+  false positives on VPNs, privacy extensions, and open DevTools panels).
 - **`/debug` — diagnostic mode.** Never blocks or redirects. The result page renders
   the full checklist (per-check status + value + explanation), the contradictions,
   and the overall automation probability / `automationType`.

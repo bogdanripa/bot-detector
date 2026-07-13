@@ -153,7 +153,7 @@ curl -sSL -o /opt/honeypot/ip2asn-v4.tsv.gz https://iptoasn.com/data/ip2asn-v4.t
 | `BD_DOMAIN` | — | domain for Let's Encrypt autocert (enables real TLS) |
 | `BD_CERT` / `BD_KEY` | — | use your own cert files instead of autocert |
 | `BD_CERT_CACHE` | `certs` | autocert cert cache dir (writable) |
-| `BD_ENFORCE_BAND` | `suspicious` | `/test` block threshold — aggressive; `automated` = conservative |
+| `BD_ENFORCE_BAND` | `automated` | `/test` block threshold — conservative; `suspicious` = aggressive (false-positives on VPNs, privacy tools, open DevTools) |
 | `BD_UA_ALLOWLIST` | — | comma-separated User-Agent substrings that bypass `/test` enforcement (e.g. your synthetic monitor). Verified good bots (Googlebot/Bingbot via rDNS, Web Bot Auth) are always allowed regardless of this. |
 | `BD_IPASN_TSV` | — | path to the iptoasn table for full IP coverage |
 | `BD_WEB_DIR`/`BD_CLIENT_JS`/`BD_SCORING` | embedded | disk overrides (dev only) |

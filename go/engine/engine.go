@@ -425,7 +425,7 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 			recordConf("scroll_teleport", "pending", "awaiting scroll on the landing page", 0)
 		case st.AnyUserGesture && conf >= 0.5:
 			credit("scroll_teleport",
-				"human scroll gesture ("+itoa(st.ScrollEvents)+" events, "+pct(conf)+" confidence)", conf, -0.6)
+				"human scroll gesture ("+itoa(st.ScrollEvents)+" events, "+pct(conf)+" confidence)", conf, -1.0)
 		case st.AnyUserGesture:
 			recordConf("scroll_teleport", "inconclusive",
 				"scrolling by gesture ("+pct(conf)+" confidence)", conf)
@@ -437,13 +437,21 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 	}
 	if lc := ss.LinkClick; lc != nil && lc.Occurred {
 		// A trackpad/wheel scroll moves the page under a parked pointer, so a
-		// genuine scroll gesture counts as approach provenance too.
-		if lc.AtExactIntegerCenter {
-			fireConf("click_no_trail", "fail", "click at exact element center", 1.0)
-		} else if lc.ApproachPoints == 0 && lc.CoalescedNearby == 0 && !humanScroll {
+		// genuine scroll gesture counts as approach provenance too. Keyboard
+		// activation (Enter/Space on a focused link ⇒ detail=0) is a human input
+		// path — browsers synthesize those clicks at the element center, so it
+		// must be recognized BEFORE the center-click tell.
+		switch {
+		case !lc.IsTrusted:
+			fireConf("click_no_trail", "fail", "synthetic click (isTrusted=false)", 1.0)
+		case lc.KeyboardActivated:
+			credit("click_no_trail", "keyboard activation (Enter/Space on the focused link)", 1.0, -1.0)
+		case lc.AtExactIntegerCenter && lc.ApproachPoints == 0 && lc.CoalescedNearby == 0 && !humanScroll:
+			fireConf("click_no_trail", "fail", "click at exact element center with no approach", 1.0)
+		case lc.ApproachPoints == 0 && lc.CoalescedNearby == 0 && !humanScroll:
 			fireConf("click_no_trail", "fail", "no approach trail or scroll gesture", 1.0)
-		} else {
-			credit("click_no_trail", "human approach (pointer trail or scroll gesture)", 1.0, -0.6)
+		default:
+			credit("click_no_trail", "human approach (pointer trail or scroll gesture)", 1.0, -1.0)
 		}
 	} else {
 		recordConf("click_no_trail", "pending", "awaiting the landing-page link click", 0)
@@ -472,7 +480,7 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 				"clicks fixed at ~"+pct(cp.MeanX)+","+pct(cp.MeanY)+" of the target ("+pct(conf)+" confidence)", conf)
 		default:
 			credit("click_position_pattern",
-				"varied click placement over "+itoa(cp.Count)+" clicks ("+pct(conf)+" confidence)", conf, -0.6)
+				"varied click placement over "+itoa(cp.Count)+" clicks ("+pct(conf)+" confidence)", conf, -1.0)
 		}
 	}
 	// Typing cadence: confidence grows with keystrokes observed across the WHOLE
@@ -513,7 +521,7 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 				"zero-variance (robotic) typing cadence ("+pct(conf)+" confidence)", conf)
 		default:
 			credit("behavior_scripted",
-				"human-like typing ("+itoa(totalKeys)+" keys, "+pct(conf)+" confidence)", conf, -0.8)
+				"human-like typing ("+itoa(totalKeys)+" keys, "+pct(conf)+" confidence)", conf, -1.2)
 		}
 	}
 	// Human editing keys: non-printing keys (Shift/Tab/Backspace/arrows/Ctrl) a
@@ -553,9 +561,9 @@ func (e *Engine) Score(ss schema.SignalSet) schema.Report {
 		}
 		if len(fn.StepsSeen) >= 2 {
 			if !fn.CrossNavConsistent {
-				fireContra("cross_nav_inconsistency", "JA4/UA/IP changed between pages")
+				fireContra("cross_nav_inconsistency", "TLS stack/UA/IP changed between pages")
 			} else {
-				passContra("cross_nav_inconsistency", "stable JA4/UA/IP across pages")
+				passContra("cross_nav_inconsistency", "stable TLS stack/UA/IP across pages")
 			}
 		} else {
 			recordContra("cross_nav_inconsistency", "pending", "awaiting the next page")
@@ -638,7 +646,9 @@ func inferType(fired map[string]bool) string {
 		return "scripted"
 	case fired["headless_ua"]:
 		return "headless"
-	case fired["cdp_runtime_enable"] || fired["playwright_bindings"] || fired["cdc_artifacts"] ||
+	// cdp_runtime_enable alone is deliberately NOT here: an open DevTools panel
+	// fires it on a real human, and labeling them "agentic-cdp" is misleading.
+	case fired["playwright_bindings"] || fired["cdc_artifacts"] ||
 		fired["selenium_attributes"] || fired["navigator_webdriver"] || fired["funnel_bypass"]:
 		return "agentic-cdp"
 	case fired["clean_env_agentic_behavior"]:
@@ -650,8 +660,9 @@ func inferType(fired map[string]bool) string {
 
 func confidence(ss schema.SignalSet, fired map[string]bool) float64 {
 	c := 0.5
-	// A single conclusive tell ⇒ high confidence immediately.
-	for _, id := range []string{"cdp_runtime_enable", "tls_ua_vendor_mismatch", "headless_ua",
+	// A single conclusive tell ⇒ high confidence immediately. (cdp_runtime_enable
+	// is NOT conclusive: an open DevTools panel fires it on a real human.)
+	for _, id := range []string{"tls_ua_vendor_mismatch", "headless_ua",
 		"cdc_artifacts", "selenium_attributes", "library_user_agent", "ai_realtime_agent", "navigator_webdriver"} {
 		if fired[id] {
 			c += 0.4
